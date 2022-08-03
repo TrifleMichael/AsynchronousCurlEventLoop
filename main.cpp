@@ -19,9 +19,14 @@ g++ -std=c++11 main.cpp -lpthread -lcurl -luv -o main && main
 
 /*
 TODO:
-- keep loop working until a closing signal comes
+- Keep loop working until a closing signal comes
+- Fix refreshing handle timers
 - Properly closing curl handles
 
+- reusing socket errors can happen - handle by trying new socket, and pass error as last resort
+
+- Maybe better interface for requesting downloads?
+- multiple uv loop threads
 
 */
 
@@ -48,6 +53,7 @@ typedef struct CurlHandleContext
 typedef struct UvTimerHandleData
 {
   bool refresh = true;
+  bool inUse = true;
 } UvTimerHandleData;
 
 std::vector<std::unordered_map<std::string, std::string*>*> urlContentMapQueue;
@@ -58,8 +64,23 @@ std::vector<CurlHandleContext> handleVector;
 
 void timerCallback(uv_timer_t *handle)
 {
-  std::cout << "Handle should be closed!\n";
-  // uv_timer_stop(handle);
+  UvTimerHandleData* data = (UvTimerHandleData*)(handle->data);
+
+  if (!data->inUse) {
+    if (data->refresh) {
+      data->refresh = false;
+      std::cout << "Handle about to expire\n";
+    } else {
+      uv_timer_stop(handle);
+      std::cout << "Handle expired\n";
+      return;
+    }
+  }
+
+  if (data->refresh) {
+    uv_timer_again(handle);
+    std::cout << "Handle bounced\n";
+  }
 }
 
 // Initializes a handle using a socket and passes it to context
@@ -100,7 +121,7 @@ size_t myCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
   return size * nmemb;
 }
 
-// Adds easy handlethat is ready to download data to multi handle 
+// Adds easy handle that is ready to download data to multi handle 
 static void startDownload(std::string *dst, std::string url)
 {
   CURL *handle = nullptr;
@@ -110,7 +131,11 @@ static void startDownload(std::string *dst, std::string url)
   for(int i = 0; i < handleVector.size(); i++) {
     if (!handleVector[i].inUse) {
       handleVector[i].inUse = true;
-      
+
+      // Refreshing timer
+      UvTimerHandleData *data = (UvTimerHandleData*)(&handleVector[i].timerHandle.data);
+      data->inUse = true;
+      data->refresh = true;
 
       handle = handleVector[i].handle;
       *handleIndex = i;
@@ -127,7 +152,6 @@ static void startDownload(std::string *dst, std::string url)
     chc.inUse = true; 
 
     UvTimerHandleData *data = new UvTimerHandleData();
-    chc.timerHandle.timeout = curlBuffer;
     chc.timerHandle.data = data;
 
     // Initializing timer for removal of handle
@@ -177,7 +201,11 @@ static void check_multi_info(void)
       handleVector[*ind].inUse = false;
 
       // Start timer for removal
-      uv_timer_start(&(handleVector[*ind].timerHandle), timerCallback, curlBuffer, 0);
+      uv_timer_t *timerHandle = &(handleVector[*ind].timerHandle);
+      UvTimerHandleData *data = (UvTimerHandleData*)timerHandle->data;
+      data->refresh = true;
+      data->inUse = false;
+      uv_timer_start(timerHandle, timerCallback, curlBuffer, curlBuffer);
 
       curl_multi_remove_handle(curl_handle, easy_handle);
       // curl_easy_cleanup(easy_handle);
@@ -278,12 +306,6 @@ static int handle_socket(CURL *easy, curl_socket_t s, int action, void *userp,
 }
 
 // -------------------------------------------------------------------------------------------------------------------
-
-// void runDownloads(std::vector<std::string> urlVector)
-// {
-//   auto map = urlVectorToUrlContentMap(urlVector);
-//   runDownloadsFromMap(map);
-// }
 
 // Downloads contents from urls to contentMap in parallel
 void runDownloadsFromMap(std::unordered_map<std::string, std::string*> *urlContentMap)
@@ -444,8 +466,8 @@ int main()
 
   t1.join();
 
-  printContents(getResponse(0));
-  printContents(getResponse(1));
+  // printContents(getResponse(0));
+  // printContents(getResponse(1));
   // std::cout << "Response:\n" << *getResponse(0, "http://ccdb-test.cern.ch:8080/latest/TPC/.*");
 
   return 0;
