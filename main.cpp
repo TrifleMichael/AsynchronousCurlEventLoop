@@ -14,14 +14,13 @@
 #include <unistd.h> // time measurement
 
 /*
-g++ curlMultithreadReusingCurlAsynchronous.cpp -lcurl -luv -o ./compiled/curlMultithreadReusingCurlAsynchronous && ./compiled/curlMultithreadReusingCurlAsynchronous
-g++ -std=c++11 curlMultithreadReusingCurlAsynchronous.cpp -lpthread -lcurl -luv -o ./compiled/curlMultithreadReusingCurlAsynchronous && ./compiled/curlMultithreadReusingCurlAsynchronous
+g++ -std=c++11 main.cpp -lpthread -lcurl -luv -o main && main
 */
 
 /*
 TODO:
 - keep loop working until a closing signal comes
-- finish reusing handles
+- Properly closing curl handles
 
 
 */
