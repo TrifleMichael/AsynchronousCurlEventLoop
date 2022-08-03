@@ -14,7 +14,7 @@
 #include <unistd.h> // time measurement
 
 /*
-g++ -std=c++11 main.cpp -lpthread -lcurl -luv -o main && main
+g++ -std=c++11 main.cpp -lpthread -lcurl -luv -o main && ./main
 */
 
 /*
@@ -27,6 +27,7 @@ TODO:
 
 - Maybe better interface for requesting downloads?
 - multiple uv loop threads
+- sometimes clearing multihandle breaks
 
 */
 
@@ -59,7 +60,7 @@ typedef struct UvTimerHandleData
 std::vector<std::unordered_map<std::string, std::string*>*> urlContentMapQueue;
 std::vector<int> queueStatus;
 
-std::vector<CurlHandleContext> handleVector;
+std::vector<CurlHandleContext*> handleVector;
 
 
 void timerCallback(uv_timer_t *handle)
@@ -111,6 +112,19 @@ static void destroy_curl_context(curl_context_t *context)
   uv_close((uv_handle_t *)&context->poll_handle, curl_close_cb);
 }
 
+CurlHandleContext* createCurlHandleContext(CURL *handle)
+{
+  auto context = new CurlHandleContext();
+  context->handle = handle;
+  context->inUse = true;
+
+  auto data = new UvTimerHandleData();
+  context->timerHandle.data = data;
+  uv_timer_init(loop, &(context->timerHandle));
+
+  return context;
+}
+
 // Curl function for writing data from call to memory
 size_t myCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
 {
@@ -129,15 +143,15 @@ static void startDownload(std::string *dst, std::string url)
 
   // Search for unused handle
   for(int i = 0; i < handleVector.size(); i++) {
-    if (!handleVector[i].inUse) {
-      handleVector[i].inUse = true;
+    if (!handleVector[i]->inUse) {
+      handleVector[i]->inUse = true;
 
       // Refreshing timer
-      UvTimerHandleData *data = (UvTimerHandleData*)(&handleVector[i].timerHandle.data);
+      UvTimerHandleData *data = (UvTimerHandleData*)(&(handleVector[i]->timerHandle.data));
       data->inUse = true;
       data->refresh = true;
 
-      handle = handleVector[i].handle;
+      handle = handleVector[i]->handle;
       *handleIndex = i;
       std::cout << "REUSING HANDLE\n";
       break;
@@ -147,15 +161,7 @@ static void startDownload(std::string *dst, std::string url)
   // In no unused handle found then create handle
   if (handle == nullptr) {
     handle = curl_easy_init();
-    CurlHandleContext chc;
-    chc.handle = handle;
-    chc.inUse = true; 
-
-    UvTimerHandleData *data = new UvTimerHandleData();
-    chc.timerHandle.data = data;
-
-    // Initializing timer for removal of handle
-    uv_timer_init(loop, &(chc.timerHandle));
+    auto chc = createCurlHandleContext(handle);
 
     handleVector.push_back(chc);
     //ind = (int*)malloc(sizeof(int));
@@ -198,10 +204,10 @@ static void check_multi_info(void)
       curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &ind);
 
       // Mark handle as not in use
-      handleVector[*ind].inUse = false;
+      handleVector[*ind]->inUse = false;
 
       // Start timer for removal
-      uv_timer_t *timerHandle = &(handleVector[*ind].timerHandle);
+      uv_timer_t *timerHandle = &(handleVector[*ind]->timerHandle);
       UvTimerHandleData *data = (UvTimerHandleData*)timerHandle->data;
       data->refresh = true;
       data->inUse = false;
@@ -396,7 +402,7 @@ int oldMain()
 
   // Cleaning up curl
   for(int i = 0; i < handleVector.size(); i++) {
-    curl_easy_cleanup(handleVector[i].handle);    
+    curl_easy_cleanup(handleVector[i]->handle);    
   }
   curl_multi_cleanup(curl_handle);
 
