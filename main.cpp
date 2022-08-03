@@ -27,6 +27,7 @@ TODO:
 
 - Maybe better interface for requesting downloads?
 - multiple uv loop threads
+
 - sometimes clearing multihandle breaks
 
 */
@@ -47,7 +48,8 @@ typedef struct curl_context_s
 typedef struct CurlHandleContext
 {
   bool inUse;
-  CURL* handle;
+  int index;
+  CURL* curlHandle;
   uv_timer_t timerHandle;
 } CurlHandleContext;
 
@@ -55,6 +57,7 @@ typedef struct UvTimerHandleData
 {
   bool refresh = true;
   bool inUse = true;
+  // CurlHandleContext *curlHandleContext = nullptr;
 } UvTimerHandleData;
 
 std::vector<std::unordered_map<std::string, std::string*>*> urlContentMapQueue;
@@ -112,13 +115,15 @@ static void destroy_curl_context(curl_context_t *context)
   uv_close((uv_handle_t *)&context->poll_handle, curl_close_cb);
 }
 
-CurlHandleContext* createCurlHandleContext(CURL *handle)
+CurlHandleContext* createCurlHandleContext(CURL *handle, int index)
 {
   auto context = new CurlHandleContext();
-  context->handle = handle;
+  context->curlHandle = handle;
   context->inUse = true;
+  context->index = index;
 
   auto data = new UvTimerHandleData();
+  // data->curlHandleContext = context;
   context->timerHandle.data = data;
   uv_timer_init(loop, &(context->timerHandle));
 
@@ -151,7 +156,7 @@ static void startDownload(std::string *dst, std::string url)
       data->inUse = true;
       data->refresh = true;
 
-      handle = handleVector[i]->handle;
+      handle = handleVector[i]->curlHandle;
       *handleIndex = i;
       std::cout << "REUSING HANDLE\n";
       break;
@@ -161,7 +166,7 @@ static void startDownload(std::string *dst, std::string url)
   // In no unused handle found then create handle
   if (handle == nullptr) {
     handle = curl_easy_init();
-    auto chc = createCurlHandleContext(handle);
+    auto chc = createCurlHandleContext(handle, handleVector.size());
 
     handleVector.push_back(chc);
     //ind = (int*)malloc(sizeof(int));
@@ -402,7 +407,7 @@ int oldMain()
 
   // Cleaning up curl
   for(int i = 0; i < handleVector.size(); i++) {
-    curl_easy_cleanup(handleVector[i]->handle);    
+    curl_easy_cleanup(handleVector[i]->curlHandle);    
   }
   curl_multi_cleanup(curl_handle);
 
