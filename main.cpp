@@ -34,6 +34,96 @@ Questions:
 
 bool twoBatches = true;
 
+
+void checkDownloadTasks(uv_timer_t *handle)
+{
+  AsynchronousDownloader* AD = (AsynchronousDownloader*)handle->data;
+  if (AD->closeLoop)
+  {
+    uv_timer_stop(handle);
+  }
+
+  for(int i = 0; i < AD->queueStatus.size(); i++)
+  {
+    if (AD->queueStatus[i] == 0)
+    {
+      AD->runDownloadsFromMap(AD->urlContentMapQueue[i], i);
+      AD->queueStatus[i] = 1;
+    }
+  }
+}
+
+void timerCallback(uv_timer_t *handle)
+{
+  auto timerData = (AsynchronousDownloader::UvTimerHandleData*)(handle->data);
+  AsynchronousDownloader* AD = timerData->downloaderPtr;
+
+  if (!timerData->curlHandleData->inUse) {
+    if (timerData->refresh) {
+      timerData->refresh = false;
+      // std::cout << "Handle about to expire\n";
+    } else {
+      uv_timer_stop(handle);
+      // std::cout << "Handle expired\n";
+      
+      auto curlHandleData = timerData->curlHandleData;
+      int index = curlHandleData->index;
+      std::cout << "Handle expired at index: " << index << "\n";
+      free(AD->handleDataMap[index]);
+      AD->handleDataMap.erase(index);
+      return;
+    }
+  }
+
+  if (timerData->refresh) {
+    uv_timer_again(handle);
+    // std::cout << "Handle bounced\n";
+  }
+}
+
+
+
+void on_timeout(uv_timer_t *req)
+{
+  auto AD = (AsynchronousDownloader*)req->data;
+  int running_handles;
+  curl_multi_socket_action(AD->curl_handle, CURL_SOCKET_TIMEOUT, 0,
+                           &running_handles);
+  AD->check_multi_info();
+}
+
+// Is used to react to polling file descriptors in poll_handle
+// Calls handle_socket indirectly for further reading*
+// If call is finished closes handle indirectly by check multi info
+void curl_perform(uv_poll_t *req, int status, int events)
+{
+  auto AD = (AsynchronousDownloader*)req->data;
+  int running_handles;
+  int flags = 0;
+  AsynchronousDownloader::curl_context_t *context;
+
+  if (events & UV_READABLE)
+    flags |= CURL_CSELECT_IN;
+  if (events & UV_WRITABLE)
+    flags |= CURL_CSELECT_OUT;
+
+  context = (AsynchronousDownloader::curl_context_t *)req->data;
+
+  curl_multi_socket_action(AD->curl_handle, context->sockfd, flags,
+                           &running_handles);
+
+  AD->check_multi_info();
+}
+
+
+
+
+
+
+
+
+
+
 class AsynchronousDownloader {
 
 public:
@@ -65,6 +155,7 @@ typedef struct UvTimerHandleData
 {
   bool refresh = true;
   CurlHandleData *curlHandleData = nullptr;
+  AsynchronousDownloader *downloaderPtr;
 } UvTimerHandleData;
 
 
@@ -73,32 +164,6 @@ std::vector<int> queueStatus;
 std::vector<int> queueProgress;
 std::unordered_map<int, CurlHandleData*> handleDataMap;
 
-void AsynchronousDownloader::timerCallback(uv_timer_t *handle)
-{
-  auto timerData = (UvTimerHandleData*)(handle->data);
-
-  if (!timerData->curlHandleData->inUse) {
-    if (timerData->refresh) {
-      timerData->refresh = false;
-      // std::cout << "Handle about to expire\n";
-    } else {
-      uv_timer_stop(handle);
-      // std::cout << "Handle expired\n";
-      
-      auto curlHandleData = timerData->curlHandleData;
-      int index = curlHandleData->index;
-      std::cout << "Handle expired at index: " << index << "\n";
-      free(handleDataMap[index]);
-      handleDataMap.erase(index);
-      return;
-    }
-  }
-
-  if (timerData->refresh) {
-    uv_timer_again(handle);
-    // std::cout << "Handle bounced\n";
-  }
-}
 
 // Initializes a handle using a socket and passes it to context
 curl_context_t* AsynchronousDownloader::create_curl_context(curl_socket_t sockfd)
@@ -108,6 +173,7 @@ curl_context_t* AsynchronousDownloader::create_curl_context(curl_socket_t sockfd
   context = (curl_context_t *)malloc(sizeof(*context));
 
   context->sockfd = sockfd;
+  context->poll_handle.data = this;
 
   uv_poll_init_socket(loop, &context->poll_handle, sockfd);
   context->poll_handle.data = context;
@@ -259,36 +325,6 @@ void AsynchronousDownloader::check_multi_info(void)
   }
 }
 
-// Is used to react to polling file descriptors in poll_handle
-// Calls handle_socket indirectly for further reading*
-// If call is finished closes handle indirectly by check multi info
-void AsynchronousDownloader::curl_perform(uv_poll_t *req, int status, int events)
-{
-  int running_handles;
-  int flags = 0;
-  curl_context_t *context;
-
-  if (events & UV_READABLE)
-    flags |= CURL_CSELECT_IN;
-  if (events & UV_WRITABLE)
-    flags |= CURL_CSELECT_OUT;
-
-  context = (curl_context_t *)req->data;
-
-  curl_multi_socket_action(curl_handle, context->sockfd, flags,
-                           &running_handles);
-
-  check_multi_info();
-}
-
-void AsynchronousDownloader::on_timeout(uv_timer_t *req)
-{
-  int running_handles;
-  curl_multi_socket_action(curl_handle, CURL_SOCKET_TIMEOUT, 0,
-                           &running_handles);
-  check_multi_info();
-}
-
 // Connects curl timer with uv timer
 int start_timeout(CURLM *multi, long timeout_ms, void *userp)
 {
@@ -366,23 +402,6 @@ std::unordered_map<std::string, std::string*>* AsynchronousDownloader::urlVector
   return urlContentMap;
 }
 
-void AsynchronousDownloader::checkDownloadTasks(uv_timer_t *handle)
-{
-  if (closeLoop)
-  {
-    uv_timer_stop(handle);
-  }
-
-  for(int i = 0; i < queueStatus.size(); i++)
-  {
-    if (queueStatus[i] == 0)
-    {
-      runDownloadsFromMap(urlContentMapQueue[i], i);
-      queueStatus[i] = 1;
-    }
-  }
-}
-
 void AsynchronousDownloader::printBar()
 {
   std::cout << "------------------------------------\n";
@@ -401,6 +420,7 @@ void AsynchronousDownloader::printContents(std::unordered_map<std::string, std::
 
 int AsynchronousDownloader::oldMain()
 {
+  timeout.data = this;
   auto start = std::chrono::steady_clock::now();
 
   loop = uv_default_loop();
@@ -417,6 +437,7 @@ int AsynchronousDownloader::oldMain()
   // uv_timer_start(&timerHandle, timerCallback, curlBuffer, 0);
 
   uv_timer_t timerCheckQueueHandle;
+  timerCheckQueueHandle.data = this;
   uv_timer_init(loop, &timerCheckQueueHandle);
   uv_timer_start(&timerCheckQueueHandle, checkDownloadTasks, 200, 200);
 
@@ -508,20 +529,20 @@ int main()
     std::vector<std::string> urlVec2;
     urlVec2.push_back("http://alice-ccdb.cern.ch/browse/TPC/.*");
     urlVec2.push_back("http://alice-ccdb.cern.ch/latest/TPC/.*");
-    int secondResponse = addDownloadTask(urlVec2);
+    int secondResponse = AS->addDownloadTask(urlVec2);
   }
 
-  while (queueProgress[0] != 2 || queueProgress[1] != 2) {
+  while (AS->queueProgress[0] != 2 || AS->queueProgress[1] != 2) {
     sleep(1);
   }
 
   std::cout << "Signalled to close loop\n";
-  closeLoop = true;
+  AS->closeLoop = true;
   t1.join();
   std::cout << "All worked well!\n";
 
-  printContents(getResponse(0));
-  printContents(getResponse(1));
+  AS->printContents(AS->getResponse(0));
+  AS->printContents(AS->getResponse(1));
   // std::cout << "Response:\n" << *getResponse(0, "http://ccdb-test.cern.ch:8080/latest/TPC/.*");
 
   return 0;
