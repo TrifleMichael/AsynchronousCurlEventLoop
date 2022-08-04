@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <uv.h>
@@ -118,405 +119,362 @@ void curl_perform(uv_poll_t *req, int status, int events)
 
 
 
-
-
-
-
-class AsynchronousDownloader {
-
-public:
-
-uint64_t curlBuffer = 950; // miliseconds durning which handle will be left open after last call
-int loopIterations = 5000;
-
-bool closeLoop = false;
-uv_loop_t *loop;
-CURLM *curl_handle;
-uv_timer_t timeout;
-
-typedef struct curl_context_s
-{
-  uv_poll_t poll_handle;
-  curl_socket_t sockfd;
-} curl_context_t;
-
-typedef struct CurlHandleData
-{
-  bool inUse = true;
-  int index;
-  CURL* curlHandle;
-  uv_timer_t timerHandle;
-  int queueIndex;
-} CurlHandleData;
-
-typedef struct UvTimerHandleData
-{
-  bool refresh = true;
-  CurlHandleData *curlHandleData = nullptr;
-  AsynchronousDownloader *downloaderPtr;
-} UvTimerHandleData;
-
-
-std::vector<std::unordered_map<std::string, std::string*>*> urlContentMapQueue;
-std::vector<int> queueStatus;
-std::vector<int> queueProgress;
-std::unordered_map<int, CurlHandleData*> handleDataMap;
-
-
-// Initializes a handle using a socket and passes it to context
-curl_context_t* AsynchronousDownloader::create_curl_context(curl_socket_t sockfd)
-{
-  curl_context_t *context;
-
-  context = (curl_context_t *)malloc(sizeof(*context));
-
-  context->sockfd = sockfd;
-  context->poll_handle.data = this;
-
-  uv_poll_init_socket(loop, &context->poll_handle, sockfd);
-  context->poll_handle.data = context;
-
-  return context;
-}
-
-// Frees data from curl handle inside uv_handle*
-static void AsynchronousDownloader::curl_close_cb(uv_handle_t *handle)
-{
-  curl_context_t *context = (curl_context_t *)handle->data;
-  free(context);
-}
-
-// Makes an asynchronious call to free curl context*
-static void AsynchronousDownloader::destroy_curl_context(curl_context_t *context)
-{
-  uv_close((uv_handle_t *)&context->poll_handle, curl_close_cb);
-}
-
-// Obviously not safe for int overflow. Needs fixing!
-int AsynchronousDownloader::createCurlHandleIndex()
-{
-  int i = 0;
-  for (std::pair<int, CurlHandleData*> indexHandleDataPair : handleDataMap) {
-    if (i <= indexHandleDataPair.first) i = indexHandleDataPair.first + 1;
-  }
-  return i;
-}
-
-CurlHandleData* AsynchronousDownloader::createCurlHandleData(CURL *handle, int queueIndex)
-{
-  auto context = (CurlHandleData*)malloc(sizeof(CurlHandleData));
-  context->curlHandle = handle;
-  context->inUse = true;
-  context->index = createCurlHandleIndex();
-  context->queueIndex = queueIndex;
-
-  auto timerHandleData = (UvTimerHandleData*)malloc(sizeof(UvTimerHandleData));
-  timerHandleData->curlHandleData = context;
-  context->timerHandle.data = timerHandleData;
-
-  uv_timer_init(loop, &(context->timerHandle));
-
-  return context;
-}
-
-// Curl function for writing data from call to memory
-size_t AsynchronousDownloader::myCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
-{
-  char* conts = (char*)contents;
-  for(int i = 0; i < nmemb; i++) {
-    (*dst) += *(conts++);
-  }
-  return size * nmemb;
-}
-
-// Adds easy handle that is ready to download data to multi handle 
-void AsynchronousDownloader::startDownload(std::string *dst, std::string url, int queueInd)
-{
-  CURL *handle = nullptr;
-  int *handleIndex = (int*)malloc(sizeof(int));
-
-  // Search for unused handle
-  for (std::pair<int, CurlHandleData*> indexHandleDataPair : handleDataMap) {
-    auto handleData = indexHandleDataPair.second;    
-    if (!handleData->inUse) {
-      handleData->inUse = true;
-      handleData->queueIndex = queueInd;
-      // Setting timer to refresh
-      auto data = (UvTimerHandleData *)(handleData->timerHandle.data);
-      data->curlHandleData->inUse = true;
-      data->refresh = true;
-
-      handle = handleData->curlHandle;
-      *handleIndex = indexHandleDataPair.first;
-      std::cout << "Reusing handle at index: " << handleData->index << "\n";
-      break;
-    }
-  }
-
-  // In no unused handle found then create handle
-  if (handle == nullptr) {
-    handle = curl_easy_init();
-    auto chc = createCurlHandleData(handle, queueInd);
-    handleDataMap[chc->index] = chc;
-
-    *handleIndex = chc->index;
-    std::cout << "Creating handle at index: " << chc->index << "\n";
-  }
-
-  curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, myCallback);
-  curl_easy_setopt(handle, CURLOPT_WRITEDATA, dst);
-  curl_easy_setopt(handle, CURLOPT_PRIVATE, handleIndex);
-
-  curl_multi_add_handle(curl_handle, handle);
-}
-
-// Removes used easy handles from multihandle
-void AsynchronousDownloader::check_multi_info(void)
-{
-  char *done_url;
-  CURLMsg *message;
-  int pending;
-  CURL *easy_handle;
-
-  while ((message = curl_multi_info_read(curl_handle, &pending)))
+  // Initializes a handle using a socket and passes it to context
+  AsynchronousDownloader::curl_context_t* AsynchronousDownloader::create_curl_context(curl_socket_t sockfd, AsynchronousDownloader* objPtr)
   {
-    switch (message->msg)
-    {
-    case CURLMSG_DONE:
-    {
-      /* Do not use message data after calling curl_multi_remove_handle() and
-         curl_easy_cleanup(). As per curl_multi_info_read() docs:
-         "WARNING: The data the returned pointer points to will not survive
-         calling curl_multi_cleanup, curl_multi_remove_handle or
-         curl_easy_cleanup." */
-      easy_handle = message->easy_handle;
+    curl_context_t *context;
 
-      curl_easy_getinfo(easy_handle, CURLINFO_EFFECTIVE_URL, &done_url);
-      printf("%s DONE\n", done_url);
+    context = (curl_context_t *)malloc(sizeof(*context));
 
-      int *ind;
-      curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &ind);
+    context->sockfd = sockfd;
+    context->poll_handle.data = objPtr;
 
-      // Mark handle as not in use
-      handleDataMap[*ind]->inUse = false;
-      queueProgress[handleDataMap[*ind]->queueIndex]++;
+    uv_poll_init_socket(objPtr->loop, &context->poll_handle, sockfd);
+    context->poll_handle.data = context;
 
-      // Start timer for removal
-      uv_timer_t *timerHandle = &(handleDataMap[*ind]->timerHandle);
-      auto data = (UvTimerHandleData*)timerHandle->data;
-      data->refresh = true;
-      data->curlHandleData->inUse = false;
-      uv_timer_start(timerHandle, timerCallback, curlBuffer, curlBuffer);
+    return context;
+  }
 
+  // Frees data from curl handle inside uv_handle*
+  void AsynchronousDownloader::curl_close_cb(uv_handle_t *handle)
+  {
+    curl_context_t *context = (curl_context_t *)handle->data;
+    free(context);
+  }
 
-      free(ind);
-      curl_multi_remove_handle(curl_handle, easy_handle);
-      // curl_easy_cleanup(easy_handle);
+  // Makes an asynchronious call to free curl context*
+  void AsynchronousDownloader::destroy_curl_context(curl_context_t *context)
+  {
+    uv_close((uv_handle_t *)&context->poll_handle, curl_close_cb);
+  }
+
+  // Obviously not safe for int overflow. Needs fixing!
+  int AsynchronousDownloader::createCurlHandleIndex(std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap)
+  {
+    int i = 0;
+    for (std::pair<int, CurlHandleData*> indexHandleDataPair : *handleDataMap) {
+      if (i <= indexHandleDataPair.first) i = indexHandleDataPair.first + 1;
     }
-      break;
+    return i;
+  }
 
+  AsynchronousDownloader::CurlHandleData* AsynchronousDownloader::createCurlHandleData(CURL *handle, int queueIndex, std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap, uv_loop_t *loop)
+  {
+    auto context = (CurlHandleData*)malloc(sizeof(CurlHandleData));
+    context->curlHandle = handle;
+    context->inUse = true;
+    context->index = createCurlHandleIndex(handleDataMap);
+    context->queueIndex = queueIndex;
+
+    auto timerHandleData = (UvTimerHandleData*)malloc(sizeof(UvTimerHandleData));
+    timerHandleData->curlHandleData = context;
+    context->timerHandle.data = timerHandleData;
+
+    uv_timer_init(loop, &(context->timerHandle));
+
+    return context;
+  }
+
+  // Curl function for writing data from call to memory
+  size_t AsynchronousDownloader::myCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
+  {
+    char* conts = (char*)contents;
+    for(int i = 0; i < nmemb; i++) {
+      (*dst) += *(conts++);
+    }
+    return size * nmemb;
+  }
+
+  // Adds easy handle that is ready to download data to multi handle 
+  void AsynchronousDownloader::startDownload(std::string *dst, std::string url, int queueInd, std::unordered_map<int, CurlHandleData*> *handleDataMap, uv_loop_t *loop, CURLM *curl_handle)
+  {
+    CURL *handle = nullptr;
+    int *handleIndex = (int*)malloc(sizeof(int));
+
+    // Search for unused handle
+    for (std::pair<int, CurlHandleData*> indexHandleDataPair : *handleDataMap) {
+      auto handleData = indexHandleDataPair.second;    
+      if (!handleData->inUse) {
+        handleData->inUse = true;
+        handleData->queueIndex = queueInd;
+        // Setting timer to refresh
+        auto data = (UvTimerHandleData *)(handleData->timerHandle.data);
+        data->curlHandleData->inUse = true;
+        data->refresh = true;
+
+        handle = handleData->curlHandle;
+        *handleIndex = indexHandleDataPair.first;
+        std::cout << "Reusing handle at index: " << handleData->index << "\n";
+        break;
+      }
+    }
+
+    // In no unused handle found then create handle
+    if (handle == nullptr) {
+      handle = curl_easy_init();
+      auto chc = createCurlHandleData(handle, queueInd, handleDataMap, loop);
+      (*handleDataMap)[chc->index] = chc;
+
+      *handleIndex = chc->index;
+      std::cout << "Creating handle at index: " << chc->index << "\n";
+    }
+
+    curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, myCallback);
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, dst);
+    curl_easy_setopt(handle, CURLOPT_PRIVATE, handleIndex);
+
+    std::cout << "HERE\n";
+    curl_multi_add_handle(curl_handle, handle);
+  }
+
+  // Removes used easy handles from multihandle
+  void AsynchronousDownloader::check_multi_info(void)
+  {
+    char *done_url;
+    CURLMsg *message;
+    int pending;
+    CURL *easy_handle;
+
+    while ((message = curl_multi_info_read(curl_handle, &pending)))
+    {
+      switch (message->msg)
+      {
+      case CURLMSG_DONE:
+      {
+        /* Do not use message data after calling curl_multi_remove_handle() and
+          curl_easy_cleanup(). As per curl_multi_info_read() docs:
+          "WARNING: The data the returned pointer points to will not survive
+          calling curl_multi_cleanup, curl_multi_remove_handle or
+          curl_easy_cleanup." */
+        easy_handle = message->easy_handle;
+
+        curl_easy_getinfo(easy_handle, CURLINFO_EFFECTIVE_URL, &done_url);
+        printf("%s DONE\n", done_url);
+
+        int *ind;
+        curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &ind);
+
+        // Mark handle as not in use
+        handleDataMap[*ind]->inUse = false;
+        queueProgress[handleDataMap[*ind]->queueIndex]++;
+
+        // Start timer for removal
+        uv_timer_t *timerHandle = &(handleDataMap[*ind]->timerHandle);
+        auto data = (UvTimerHandleData*)timerHandle->data;
+        data->refresh = true;
+        data->curlHandleData->inUse = false;
+        uv_timer_start(timerHandle, timerCallback, curlBuffer, curlBuffer);
+
+
+        free(ind);
+        curl_multi_remove_handle(curl_handle, easy_handle);
+        // curl_easy_cleanup(easy_handle);
+      }
+        break;
+
+      default:
+        fprintf(stderr, "CURLMSG default\n");
+        break;
+      }
+    }
+  }
+
+  // Connects curl timer with uv timer
+  int AsynchronousDownloader::start_timeout(CURLM *multi, long timeout_ms, void *userp, uv_timer_t *timeout)
+  {
+    if (timeout_ms < 0)
+    {
+      uv_timer_stop(timeout);
+    }
+    else
+    {
+      if (timeout_ms == 0)
+        timeout_ms = 1; /* 0 means directly call socket_action, but we will do it
+                          in a bit */
+      uv_timer_start(timeout, on_timeout, timeout_ms, 0);
+    }
+    return 0;
+  }
+
+  // Is used to react to curl_multi_socket_action 
+  // If INOUT then assigns socket to multi handle and starts polling file descriptors in poll_handle by callback
+  int AsynchronousDownloader::handle_socket(CURL *easy, curl_socket_t s, int action, void *userp,
+                          void *socketp, CURLM* curl_handle, AsynchronousDownloader* objPtr)
+  {
+    curl_context_t *curl_context;
+    int events = 0;
+
+    switch (action)
+    {
+    case CURL_POLL_IN:
+    case CURL_POLL_OUT:
+    case CURL_POLL_INOUT:
+      curl_context = socketp ? (curl_context_t *)socketp : create_curl_context(s, objPtr);
+
+      curl_multi_assign(curl_handle, s, (void *)curl_context);
+
+      if (action != CURL_POLL_IN)
+        events |= UV_WRITABLE;
+      if (action != CURL_POLL_OUT)
+        events |= UV_READABLE;
+
+      uv_poll_start(&curl_context->poll_handle, events, curl_perform);
+      break;
+    case CURL_POLL_REMOVE:
+      if (socketp)
+      {
+        uv_poll_stop(&((curl_context_t *)socketp)->poll_handle);
+        destroy_curl_context((curl_context_t *)socketp);
+        curl_multi_assign(curl_handle, s, NULL);
+      }
+      break;
     default:
-      fprintf(stderr, "CURLMSG default\n");
-      break;
+      abort();
     }
+
+    return 0;
   }
-}
 
-// Connects curl timer with uv timer
-int AsynchronousDownloader::start_timeout(CURLM *multi, long timeout_ms, void *userp)
-{
-  if (timeout_ms < 0)
+  // -------------------------------------------------------------------------------------------------------------------
+
+  // Downloads contents from urls to contentMap in parallel
+  void AsynchronousDownloader::runDownloadsFromMap(std::unordered_map<std::string, std::string*> *urlContentMap, int queueIndex)
   {
-    uv_timer_stop(&timeout);
-  }
-  else
-  {
-    if (timeout_ms == 0)
-      timeout_ms = 1; /* 0 means directly call socket_action, but we will do it
-                         in a bit */
-    uv_timer_start(&timeout, on_timeout, timeout_ms, 0);
-  }
-  return 0;
-}
-
-// Is used to react to curl_multi_socket_action 
-// If INOUT then assigns socket to multi handle and starts polling file descriptors in poll_handle by callback
-int AsynchronousDownloader::handle_socket(CURL *easy, curl_socket_t s, int action, void *userp,
-                         void *socketp)
-{
-  curl_context_t *curl_context;
-  int events = 0;
-
-  switch (action)
-  {
-  case CURL_POLL_IN:
-  case CURL_POLL_OUT:
-  case CURL_POLL_INOUT:
-    curl_context = socketp ? (curl_context_t *)socketp : create_curl_context(s);
-
-    curl_multi_assign(curl_handle, s, (void *)curl_context);
-
-    if (action != CURL_POLL_IN)
-      events |= UV_WRITABLE;
-    if (action != CURL_POLL_OUT)
-      events |= UV_READABLE;
-
-    uv_poll_start(&curl_context->poll_handle, events, curl_perform);
-    break;
-  case CURL_POLL_REMOVE:
-    if (socketp)
+    for (std::pair<std::string, std::string*> urlContentPair : *urlContentMap)
     {
-      uv_poll_stop(&((curl_context_t *)socketp)->poll_handle);
-      destroy_curl_context((curl_context_t *)socketp);
-      curl_multi_assign(curl_handle, s, NULL);
+      std::string url = urlContentPair.first;
+      startDownload(urlContentPair.second, url, queueIndex, &handleDataMap, loop, curl_handle);
     }
-    break;
-  default:
-    abort();
   }
 
-  return 0;
-}
-
-// -------------------------------------------------------------------------------------------------------------------
-
-// Downloads contents from urls to contentMap in parallel
-void AsynchronousDownloader::runDownloadsFromMap(std::unordered_map<std::string, std::string*> *urlContentMap, int queueIndex)
-{
-  for (std::pair<std::string, std::string*> urlContentPair : *urlContentMap)
+  std::unordered_map<std::string, std::string*>* AsynchronousDownloader::urlVectorToUrlContentMap(std::vector<std::string> urlVector)
   {
-    std::string url = urlContentPair.first;
-    startDownload(urlContentPair.second, url, queueIndex);
+    auto urlContentMap = new std::unordered_map<std::string, std::string*>();
+    for(int i = 0; i < urlVector.size(); i++) {
+      (*urlContentMap)[urlVector[i]] = new std::string();
+    }
+    return urlContentMap;
   }
-}
 
-std::unordered_map<std::string, std::string*>* AsynchronousDownloader::urlVectorToUrlContentMap(std::vector<std::string> urlVector)
-{
-  auto urlContentMap = new std::unordered_map<std::string, std::string*>();
-  for(int i = 0; i < urlVector.size(); i++) {
-    (*urlContentMap)[urlVector[i]] = new std::string();
-  }
-  return urlContentMap;
-}
-
-void AsynchronousDownloader::printBar()
-{
-  std::cout << "------------------------------------\n";
-}
-
-void AsynchronousDownloader::printContents(std::unordered_map<std::string, std::string*> *urlContentMap)
-{
-  std::cout << "\n";
-  for (std::pair<std::string, std::string*> element : *urlContentMap)
+  void AsynchronousDownloader::printBar()
   {
-    printBar();
-    std::cout << element.first << "\n\n"
-              << (element.second)->substr(0, 1000) << std::endl;
+    std::cout << "------------------------------------\n";
   }
-}
 
-int AsynchronousDownloader::oldMain()
-{
-  timeout.data = this;
-  auto start = std::chrono::steady_clock::now();
-
-  loop = uv_default_loop();
-
-  // Testing handle that runs every loop
-  // uv_prepare_t *handle = (uv_prepare_t*)malloc(sizeof(uv_prepare_t)); // handle that runs once every loop
-  // uv_prepare_t timerHandle;  // handle that runs once every loop
-  // uv_prepare_init(loop, &timerHandle);
-  // uv_prepare_start(&timerHandle, checkDownloadTasks);
-
-  // Testing timer handle
-  // uv_timer_t timerHandle;
-  // uv_timer_init(loop, &timerHandle);
-  // uv_timer_start(&timerHandle, timerCallback, curlBuffer, 0);
-
-  uv_timer_t timerCheckQueueHandle;
-  timerCheckQueueHandle.data = this;
-  uv_timer_init(loop, &timerCheckQueueHandle);
-  uv_timer_start(&timerCheckQueueHandle, checkDownloadTasks, 200, 200);
-
-
-  // Preparing curl and timeout
-  if (curl_global_init(CURL_GLOBAL_ALL))
+  void AsynchronousDownloader::printContents(std::unordered_map<std::string, std::string*> *urlContentMap)
   {
-    fprintf(stderr, "Could not init curl\n");
-    return 1;
+    std::cout << "\n";
+    for (std::pair<std::string, std::string*> element : *urlContentMap)
+    {
+      printBar();
+      std::cout << element.first << "\n\n"
+                << (element.second)->substr(0, 1000) << std::endl;
+    }
   }
-  uv_timer_init(loop, &timeout);
 
-  curl_handle = curl_multi_init();
-  curl_multi_setopt(curl_handle, CURLMOPT_SOCKETFUNCTION, handle_socket);
-  curl_multi_setopt(curl_handle, CURLMOPT_TIMERFUNCTION, start_timeout);
-
-  uv_run(loop, UV_RUN_DEFAULT);
-
-  // Cleaning up curl
-  for (std::pair<int, CurlHandleData*> indexHandleDataPair : handleDataMap) {
-    curl_easy_cleanup(indexHandleDataPair.second->curlHandle);
-  }
-  curl_multi_cleanup(curl_handle);
-
-  
-  // Showing execution time
-  // auto end = std::chrono::steady_clock::now();
-  // printBar();
-  // std::cout << "Elapsed time in microseconds: "
-  //       << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
-  //       << " µs" << std::endl;
-
-  // // Cleaning UV loop
-  // std::cout << "\nIs loop alive? " << uv_loop_alive(loop) << "\n";
-  // uv_stop(loop);
-  // std::cout << "Is loop alive? " << uv_loop_alive(loop) << "\n";
-  // std::cout << "Loop closed properly? " << (uv_loop_close(loop) != UV_EBUSY)  << "\n";
-  // free(loop);
-
-  return 0;
-}
-
-int AsynchronousDownloader::addDownloadTask(std::vector<std::string> urlVector)
-{
-  auto urlContentMap = urlVectorToUrlContentMap(urlVector);
-  // mutex?
-  urlContentMapQueue.push_back(urlContentMap);
-  queueStatus.push_back(0);
-  queueProgress.push_back(0);
-  // end mutex?
-
-  // 0 - queued
-  // 1 - started
-  // 2 - finished
-
-  // returns index in urlContentMapQueue
-  return queueStatus.size()-1;
-}
-
-std::unordered_map<std::string, std::string*>* AsynchronousDownloader::getResponse(int index)
-{
-  return urlContentMapQueue[index];
-}
-
-std::string* AsynchronousDownloader::getResponse(int index, std::string url)
-{
-  if (getResponse(index)->find(url) == getResponse(index)->end() )
+  int AsynchronousDownloader::oldMain()
   {
-    std::cout << "Response to url: " << url << " NOT FOUND\n";
-  }
-  return (*getResponse(index))[url];
-}
+    timeout.data = this;
+    auto start = std::chrono::steady_clock::now();
 
-};
+    loop = uv_default_loop();
+
+    // Testing handle that runs every loop
+    // uv_prepare_t *handle = (uv_prepare_t*)malloc(sizeof(uv_prepare_t)); // handle that runs once every loop
+    // uv_prepare_t timerHandle;  // handle that runs once every loop
+    // uv_prepare_init(loop, &timerHandle);
+    // uv_prepare_start(&timerHandle, checkDownloadTasks);
+
+    // Testing timer handle
+    // uv_timer_t timerHandle;
+    // uv_timer_init(loop, &timerHandle);
+    // uv_timer_start(&timerHandle, timerCallback, curlBuffer, 0);
+
+
+
+    // Preparing curl and timeout
+    if (curl_global_init(CURL_GLOBAL_ALL))
+    {
+      fprintf(stderr, "Could not init curl\n");
+      return 1;
+    }
+    uv_timer_init(loop, &timeout);
+
+    curl_handle = curl_multi_init();
+    curl_multi_setopt(curl_handle, CURLMOPT_SOCKETFUNCTION, handle_socket);
+    curl_multi_setopt(curl_handle, CURLMOPT_TIMERFUNCTION, start_timeout);
+
+
+    uv_timer_t timerCheckQueueHandle;
+    timerCheckQueueHandle.data = this;
+    uv_timer_init(loop, &timerCheckQueueHandle);
+    uv_timer_start(&timerCheckQueueHandle, checkDownloadTasks, 200, 200);
+
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    // Cleaning up curl
+    for (std::pair<int, CurlHandleData*> indexHandleDataPair : handleDataMap) {
+      curl_easy_cleanup(indexHandleDataPair.second->curlHandle);
+    }
+    curl_multi_cleanup(curl_handle);
+
+    
+    // Showing execution time
+    // auto end = std::chrono::steady_clock::now();
+    // printBar();
+    // std::cout << "Elapsed time in microseconds: "
+    //       << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
+    //       << " µs" << std::endl;
+
+    // // Cleaning UV loop
+    // std::cout << "\nIs loop alive? " << uv_loop_alive(loop) << "\n";
+    // uv_stop(loop);
+    // std::cout << "Is loop alive? " << uv_loop_alive(loop) << "\n";
+    // std::cout << "Loop closed properly? " << (uv_loop_close(loop) != UV_EBUSY)  << "\n";
+    // free(loop);
+
+    return 0;
+  }
+
+  int AsynchronousDownloader::addDownloadTask(std::vector<std::string> urlVector)
+  {
+    auto urlContentMap = urlVectorToUrlContentMap(urlVector);
+    // mutex?
+    urlContentMapQueue.push_back(urlContentMap);
+    queueStatus.push_back(0);
+    queueProgress.push_back(0);
+    // end mutex?
+
+    // 0 - queued
+    // 1 - started
+    // 2 - finished
+
+    // returns index in urlContentMapQueue
+    return queueStatus.size()-1;
+  }
+
+  std::unordered_map<std::string, std::string*>* AsynchronousDownloader::getResponse(int index)
+  {
+    return urlContentMapQueue[index];
+  }
+
+  std::string* AsynchronousDownloader::getResponse(int index, std::string url)
+  {
+    if (getResponse(index)->find(url) == getResponse(index)->end() )
+    {
+      std::cout << "Response to url: " << url << " NOT FOUND\n";
+    }
+    return (*getResponse(index))[url];
+  }
+
 
 bool twoBatches = true;
 
 int main()
 {
   AsynchronousDownloader* AS = new AsynchronousDownloader();
-  std::thread t1(AS->oldMain());
+  std::thread t1(&AsynchronousDownloader::oldMain, AS);
 
   std::vector<std::string> urlVec;
   urlVec.push_back("http://ccdb-test.cern.ch:8080/browse/TPC/.*");

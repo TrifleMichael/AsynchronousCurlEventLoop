@@ -1,4 +1,4 @@
-#pragma once
+
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +15,8 @@
 #include <chrono> // time measurement
 #include <unistd.h> // time measurement
 
+#ifndef ASYNCHRONOUSDOWNLOADER_H_
+#define ASYNCHRONOUSDOWNLOADER_H_
 
 void checkDownloadTasks(uv_timer_t *handle);
 void timerCallback(uv_timer_t *handle);
@@ -29,7 +31,7 @@ class AsynchronousDownloader
 
     bool closeLoop = false;
     uv_loop_t *loop;
-    CURLM *curl_handle;
+    CURLM *curl_handle = nullptr;
     uv_timer_t timeout;
 
     typedef struct curl_context_s
@@ -60,16 +62,16 @@ std::vector<int> queueStatus;
 std::vector<int> queueProgress;
 std::unordered_map<int, CurlHandleData*> handleDataMap;
 
-curl_context_t* create_curl_context(curl_socket_t sockfd);
+static curl_context_t* create_curl_context(curl_socket_t sockfd, AsynchronousDownloader* objPtr);
 static void curl_close_cb(uv_handle_t *handle);
 static void destroy_curl_context(curl_context_t *context);
-int createCurlHandleIndex();
-CurlHandleData* createCurlHandleData(CURL *handle, int queueIndex);
-size_t myCallback(void *contents, size_t size, size_t nmemb, std::string *dst);
-void startDownload(std::string *dst, std::string url, int queueInd);
+static int createCurlHandleIndex(std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap);
+static CurlHandleData* createCurlHandleData(CURL *handle, int queueIndex, std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap, uv_loop_t *loop);
+static size_t myCallback(void *contents, size_t size, size_t nmemb, std::string *dst);
+static void startDownload(std::string *dst, std::string url, int queueInd, std::unordered_map<int, CurlHandleData*> *handleDataMap, uv_loop_t *loop, CURLM *curl_handle);
 void check_multi_info(void);
-int start_timeout(CURLM *multi, long timeout_ms, void *userp);
-int handle_socket(CURL *easy, curl_socket_t s, int action, void *userp, void *socketp);
+static int start_timeout(CURLM *multi, long timeout_ms, void *userp, uv_timer_t *timeout);
+static int handle_socket(CURL *easy, curl_socket_t s, int action, void *userp, void *socketp, CURLM* curl_handle, AsynchronousDownloader* objPtr);
 void runDownloadsFromMap(std::unordered_map<std::string, std::string*> *urlContentMap, int queueIndex);
 std::unordered_map<std::string, std::string*>* urlVectorToUrlContentMap(std::vector<std::string> urlVector);
 void printBar();
@@ -81,3 +83,5 @@ std::string* getResponse(int index, std::string url);
 
 
 };
+
+#endif
