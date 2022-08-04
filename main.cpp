@@ -20,8 +20,6 @@ g++ -std=c++11 main.cpp -lpthread -lcurl -luv -o main && ./main
 /*
 TODO:
 - Keep loop working until a closing signal comes
-- Fix refreshing handle timers
-- Properly closing curl handles
 
 - reusing socket errors can happen - handle by trying new socket, and pass error as last resort
 
@@ -36,6 +34,7 @@ TODO:
 uint64_t curlBuffer = 1000; // miliseconds durning which handle will be left open after last call
 int loopIterations = 5000;
 bool twoBatches = true;
+
 uv_loop_t *loop;
 CURLM *curl_handle;
 uv_timer_t timeout;
@@ -47,26 +46,26 @@ typedef struct curl_context_s
   curl_socket_t sockfd;
 } curl_context_t;
 
-typedef struct CurlHandleContext
+typedef struct CurlHandleData
 {
   bool inUse;
   int index;
   CURL* curlHandle;
   uv_timer_t timerHandle;
   bool expired = false;
-} CurlHandleContext;
+} CurlHandleData;
 
 typedef struct UvTimerHandleData
 {
   bool refresh = true;
   bool inUse = true;
-  CurlHandleContext *curlHandleContext = nullptr;
+  CurlHandleData *curlHandleContext = nullptr;
 } UvTimerHandleData;
 
 std::vector<std::unordered_map<std::string, std::string*>*> urlContentMapQueue;
 std::vector<int> queueStatus;
 
-std::unordered_map<int, CurlHandleContext*> handleContextMap;
+std::unordered_map<int, CurlHandleData*> handleDataMap;
 
 
 void timerCallback(uv_timer_t *handle)
@@ -82,11 +81,10 @@ void timerCallback(uv_timer_t *handle)
       // std::cout << "Handle expired\n";
       
       auto curlHandleContext = timerData->curlHandleContext;
-      // handleContextMap[curlHandleContext->index]->expired = true;
       int index = curlHandleContext->index;
       std::cout << "Handle expired at index: " << index << "\n";
-      free(handleContextMap[index]);
-      handleContextMap.erase(index);
+      free(handleDataMap[index]);
+      handleDataMap.erase(index);
       return;
     }
   }
@@ -129,16 +127,16 @@ static void destroy_curl_context(curl_context_t *context)
 int createNewCurlHandleContextIndex()
 {
   int i = 0;
-  for (std::pair<int, CurlHandleContext*> indexContextPair : handleContextMap) {
-    if (i <= indexContextPair.first) i = indexContextPair.first + 1;
+  for (std::pair<int, CurlHandleData*> indexHandleDataPair : handleDataMap) {
+    if (i <= indexHandleDataPair.first) i = indexHandleDataPair.first + 1;
   }
   return i;
 }
 
-CurlHandleContext* createCurlHandleContext(CURL *handle)
+CurlHandleData* createCurlHandleContext(CURL *handle)
 {
-  // auto context = new CurlHandleContext();
-  auto context = (CurlHandleContext*)malloc(sizeof(CurlHandleContext));
+  // auto context = new CurlHandleData();
+  auto context = (CurlHandleData*)malloc(sizeof(CurlHandleData));
   context->curlHandle = handle;
   context->inUse = true;
   context->index = createNewCurlHandleContextIndex();
@@ -169,8 +167,8 @@ static void startDownload(std::string *dst, std::string url)
   int *handleIndex = (int*)malloc(sizeof(int));
 
   // Search for unused handle
-  for (std::pair<int, CurlHandleContext*> indexContextPair : handleContextMap) {
-    auto handleContext = indexContextPair.second;    
+  for (std::pair<int, CurlHandleData*> indexHandleDataPair : handleDataMap) {
+    auto handleContext = indexHandleDataPair.second;    
     if (!handleContext->inUse && !handleContext->expired) {
       handleContext->inUse = true;
       // Refreshing timer
@@ -179,7 +177,7 @@ static void startDownload(std::string *dst, std::string url)
       data->refresh = true;
 
       handle = handleContext->curlHandle;
-      *handleIndex = indexContextPair.first;
+      *handleIndex = indexHandleDataPair.first;
       std::cout << "Reusing handle at index: " << handleContext->index << "\n";
       break;
     }
@@ -190,7 +188,7 @@ static void startDownload(std::string *dst, std::string url)
     handle = curl_easy_init();
     auto chc = createCurlHandleContext(handle);
 
-    handleContextMap[chc->index] = chc;
+    handleDataMap[chc->index] = chc;
     //ind = (int*)malloc(sizeof(int));
     *handleIndex = chc->index;
       std::cout << "Creating handle at index: " << chc->index << "\n";
@@ -232,10 +230,10 @@ static void check_multi_info(void)
       curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &ind);
 
       // Mark handle as not in use
-      handleContextMap[*ind]->inUse = false;
+      handleDataMap[*ind]->inUse = false;
 
       // Start timer for removal
-      uv_timer_t *timerHandle = &(handleContextMap[*ind]->timerHandle);
+      uv_timer_t *timerHandle = &(handleDataMap[*ind]->timerHandle);
       auto data = (UvTimerHandleData*)timerHandle->data;
       data->refresh = true;
       data->inUse = false;
@@ -428,8 +426,8 @@ int oldMain()
 
 
   // Cleaning up curl
-  for (std::pair<int, CurlHandleContext*> indexContextPair : handleContextMap) {
-    curl_easy_cleanup(indexContextPair.second->curlHandle);
+  for (std::pair<int, CurlHandleData*> indexHandleDataPair : handleDataMap) {
+    curl_easy_cleanup(indexHandleDataPair.second->curlHandle);
   }
   curl_multi_cleanup(curl_handle);
 
