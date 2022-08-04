@@ -66,7 +66,7 @@ typedef struct UvTimerHandleData
 std::vector<std::unordered_map<std::string, std::string*>*> urlContentMapQueue;
 std::vector<int> queueStatus;
 
-std::vector<CurlHandleContext*> handleVector;
+std::unordered_map<int, CurlHandleContext*> handleContextMap;
 
 
 void timerCallback(uv_timer_t *handle)
@@ -82,7 +82,7 @@ void timerCallback(uv_timer_t *handle)
       // std::cout << "Handle expired\n";
       
       auto curlHandleContext = timerData->curlHandleContext;
-      handleVector[curlHandleContext->index]->expired = true;
+      handleContextMap[curlHandleContext->index]->expired = true;
       std::cout << "Setting as expired at index: " << curlHandleContext->index << "\n";
       return;
     }
@@ -122,13 +122,22 @@ static void destroy_curl_context(curl_context_t *context)
   uv_close((uv_handle_t *)&context->poll_handle, curl_close_cb);
 }
 
-CurlHandleContext* createCurlHandleContext(CURL *handle, int index)
+int createNewCurlHandleContextIndex()
+{
+  int i = 0;
+  for (std::pair<int, CurlHandleContext*> indexContextPair : handleContextMap) {
+    if (i <= indexContextPair.first) i = indexContextPair.first + 1;
+  }
+  return i;
+}
+
+CurlHandleContext* createCurlHandleContext(CURL *handle)
 {
   // auto context = new CurlHandleContext();
   auto context = (CurlHandleContext*)malloc(sizeof(CurlHandleContext));
   context->curlHandle = handle;
   context->inUse = true;
-  context->index = index;
+  context->index = createNewCurlHandleContextIndex();
 
   auto timerHandleData = (UvTimerHandleData*)malloc(sizeof(UvTimerHandleData));
   timerHandleData->curlHandleContext = context;
@@ -156,17 +165,17 @@ static void startDownload(std::string *dst, std::string url)
   int *handleIndex = (int*)malloc(sizeof(int));
 
   // Search for unused handle
-  for(int i = 0; i < handleVector.size(); i++) {
-    if (!handleVector[i]->inUse && !handleVector[i]->expired) {
-      handleVector[i]->inUse = true;
-
+  for (std::pair<int, CurlHandleContext*> indexContextPair : handleContextMap) {
+    auto handleContext = indexContextPair.second;    
+    if (!handleContext->inUse && !handleContext->expired) {
+      handleContext->inUse = true;
       // Refreshing timer
-      auto data = (UvTimerHandleData*)(handleVector[i]->timerHandle.data);
+      auto data = (UvTimerHandleData *)(handleContext->timerHandle.data);
       data->inUse = true;
       data->refresh = true;
 
-      handle = handleVector[i]->curlHandle;
-      *handleIndex = i;
+      handle = handleContext->curlHandle;
+      *handleIndex = indexContextPair.first;
       std::cout << "REUSING HANDLE\n";
       break;
     }
@@ -175,11 +184,11 @@ static void startDownload(std::string *dst, std::string url)
   // In no unused handle found then create handle
   if (handle == nullptr) {
     handle = curl_easy_init();
-    auto chc = createCurlHandleContext(handle, handleVector.size());
+    auto chc = createCurlHandleContext(handle);
 
-    handleVector.push_back(chc);
+    handleContextMap[chc->index] = chc;
     //ind = (int*)malloc(sizeof(int));
-    *handleIndex = handleVector.size()-1;
+    *handleIndex = chc->index;
   }
 
   curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
@@ -218,10 +227,10 @@ static void check_multi_info(void)
       curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &ind);
 
       // Mark handle as not in use
-      handleVector[*ind]->inUse = false;
+      handleContextMap[*ind]->inUse = false;
 
       // Start timer for removal
-      uv_timer_t *timerHandle = &(handleVector[*ind]->timerHandle);
+      uv_timer_t *timerHandle = &(handleContextMap[*ind]->timerHandle);
       auto data = (UvTimerHandleData*)timerHandle->data;
       data->refresh = true;
       data->inUse = false;
@@ -414,8 +423,8 @@ int oldMain()
 
 
   // Cleaning up curl
-  for(int i = 0; i < handleVector.size(); i++) {
-    curl_easy_cleanup(handleVector[i]->curlHandle);    
+  for (std::pair<int, CurlHandleContext*> indexContextPair : handleContextMap) {
+    curl_easy_cleanup(indexContextPair.second->curlHandle);
   }
   curl_multi_cleanup(curl_handle);
 
