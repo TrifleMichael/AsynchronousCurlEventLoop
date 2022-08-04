@@ -235,7 +235,6 @@ void curl_perform(uv_poll_t *req, int status, int events)
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, dst);
     curl_easy_setopt(handle, CURLOPT_PRIVATE, handleIndex);
 
-    std::cout << "HERE\n";
     curl_multi_add_handle(curl_handle, handle);
   }
 
@@ -297,7 +296,6 @@ void curl_perform(uv_poll_t *req, int status, int events)
   {
     std::cout << "start_timeout\n";
     auto timeout = (uv_timer_t*)userp;
-    std::cout << "Timeout: " << timeout << "\n";
 
     if (timeout_ms < 0)
     {
@@ -316,8 +314,9 @@ void curl_perform(uv_poll_t *req, int status, int events)
   // Is used to react to curl_multi_socket_action 
   // If INOUT then assigns socket to multi handle and starts polling file descriptors in poll_handle by callback
   int AsynchronousDownloader::handle_socket(CURL *easy, curl_socket_t s, int action, void *userp,
-                          void *socketp, CURLM* curl_handle, AsynchronousDownloader* objPtr)
+                          void *socketp, CURLM* curl_handle)
   {
+    auto objPtr = (AsynchronousDownloader*)userp;
     std::cout << "handle_socket\n";
     curl_context_t *curl_context;
     int events = 0;
@@ -328,8 +327,11 @@ void curl_perform(uv_poll_t *req, int status, int events)
     case CURL_POLL_OUT:
     case CURL_POLL_INOUT:
       curl_context = socketp ? (curl_context_t *)socketp : create_curl_context(s, objPtr);
-
+      std::cout << "Heyo\n";
+      std::cout << "CurlHandle " << curl_handle << "\n";
       curl_multi_assign(curl_handle, s, (void *)curl_context);
+      
+      std::cout << "dudo\n";
 
       if (action != CURL_POLL_IN)
         events |= UV_WRITABLE;
@@ -424,12 +426,13 @@ void curl_perform(uv_poll_t *req, int status, int events)
     }
     uv_timer_init(loop, timeout);
 
-    std::cout << "Timeout2: " << timeout << "\n";
     curl_handle = curl_multi_init();
     curl_multi_setopt(curl_handle, CURLMOPT_SOCKETFUNCTION, handle_socket);
+    curl_multi_setopt(curl_handle, CURLMOPT_SOCKETDATA, this);
     curl_multi_setopt(curl_handle, CURLMOPT_TIMERFUNCTION, start_timeout);
     curl_multi_setopt(curl_handle, CURLMOPT_TIMERDATA, timeout);
 
+    std::cout << "CurlHandle2 " << curl_handle << "\n";
 
     uv_timer_t timerCheckQueueHandle;
     timerCheckQueueHandle.data = this;
