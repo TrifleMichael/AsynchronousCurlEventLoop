@@ -32,7 +32,7 @@ class AsynchronousDownloader
     bool closeLoop = false;
     uv_loop_t *loop;
     CURLM *curl_handle = nullptr;
-    uv_timer_t timeout;
+    uv_timer_t *timeout;
 
     typedef struct curl_context_s
 {
@@ -70,7 +70,7 @@ static CurlHandleData* createCurlHandleData(CURL *handle, int queueIndex, std::u
 static size_t myCallback(void *contents, size_t size, size_t nmemb, std::string *dst);
 static void startDownload(std::string *dst, std::string url, int queueInd, std::unordered_map<int, CurlHandleData*> *handleDataMap, uv_loop_t *loop, CURLM *curl_handle);
 void check_multi_info(void);
-static int start_timeout(CURLM *multi, long timeout_ms, void *userp, uv_timer_t *timeout);
+static int start_timeout(CURLM *multi, long timeout_ms, void *userp);
 static int handle_socket(CURL *easy, curl_socket_t s, int action, void *userp, void *socketp, CURLM* curl_handle, AsynchronousDownloader* objPtr);
 void runDownloadsFromMap(std::unordered_map<std::string, std::string*> *urlContentMap, int queueIndex);
 std::unordered_map<std::string, std::string*>* urlVectorToUrlContentMap(std::vector<std::string> urlVector);
