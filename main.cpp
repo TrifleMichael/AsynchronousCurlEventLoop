@@ -19,7 +19,6 @@ g++ -std=c++11 main.cpp -lpthread -lcurl -luv -o main && ./main
 
 /*
 TODO:
-- Keep loop working until a closing signal comes
 
 - reusing socket errors can happen - handle by trying new socket, and pass error as last resort
 
@@ -33,10 +32,10 @@ uint64_t curlBuffer = 950; // miliseconds durning which handle will be left open
 int loopIterations = 5000;
 bool twoBatches = true;
 
+bool closeLoop = false;
 uv_loop_t *loop;
 CURLM *curl_handle;
 uv_timer_t timeout;
-
 
 typedef struct curl_context_s
 {
@@ -50,6 +49,7 @@ typedef struct CurlHandleData
   int index;
   CURL* curlHandle;
   uv_timer_t timerHandle;
+  int queueIndex;
 } CurlHandleData;
 
 typedef struct UvTimerHandleData
@@ -58,11 +58,11 @@ typedef struct UvTimerHandleData
   CurlHandleData *curlHandleData = nullptr;
 } UvTimerHandleData;
 
+
 std::vector<std::unordered_map<std::string, std::string*>*> urlContentMapQueue;
 std::vector<int> queueStatus;
-
+std::vector<int> queueProgress;
 std::unordered_map<int, CurlHandleData*> handleDataMap;
-
 
 void timerCallback(uv_timer_t *handle)
 {
@@ -129,7 +129,7 @@ int createCurlHandleIndex()
   return i;
 }
 
-CurlHandleData* createCurlHandleContext(CURL *handle)
+CurlHandleData* createCurlHandleData(CURL *handle)
 {
   auto context = (CurlHandleData*)malloc(sizeof(CurlHandleData));
   context->curlHandle = handle;
@@ -156,24 +156,25 @@ size_t myCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
 }
 
 // Adds easy handle that is ready to download data to multi handle 
-static void startDownload(std::string *dst, std::string url)
+static void startDownload(std::string *dst, std::string url, int queueInd)
 {
   CURL *handle = nullptr;
   int *handleIndex = (int*)malloc(sizeof(int));
 
   // Search for unused handle
   for (std::pair<int, CurlHandleData*> indexHandleDataPair : handleDataMap) {
-    auto handleContext = indexHandleDataPair.second;    
-    if (!handleContext->inUse) {
-      handleContext->inUse = true;
+    auto handleData = indexHandleDataPair.second;    
+    if (!handleData->inUse) {
+      handleData->inUse = true;
+      handleData->queueIndex = queueInd;
       // Refreshing timer
-      auto data = (UvTimerHandleData *)(handleContext->timerHandle.data);
+      auto data = (UvTimerHandleData *)(handleData->timerHandle.data);
       data->curlHandleData->inUse = true;
       data->refresh = true;
 
-      handle = handleContext->curlHandle;
+      handle = handleData->curlHandle;
       *handleIndex = indexHandleDataPair.first;
-      std::cout << "Reusing handle at index: " << handleContext->index << "\n";
+      std::cout << "Reusing handle at index: " << handleData->index << "\n";
       break;
     }
   }
@@ -181,7 +182,8 @@ static void startDownload(std::string *dst, std::string url)
   // In no unused handle found then create handle
   if (handle == nullptr) {
     handle = curl_easy_init();
-    auto chc = createCurlHandleContext(handle);
+    auto chc = createCurlHandleData(handle);
+    chc->queueIndex = queueInd;
 
     handleDataMap[chc->index] = chc;
     *handleIndex = chc->index;
@@ -225,6 +227,7 @@ static void check_multi_info(void)
 
       // Mark handle as not in use
       handleDataMap[*ind]->inUse = false;
+      queueProgress[handleDataMap[*ind]->queueIndex]++;
 
       // Start timer for removal
       uv_timer_t *timerHandle = &(handleDataMap[*ind]->timerHandle);
@@ -232,6 +235,7 @@ static void check_multi_info(void)
       data->refresh = true;
       data->curlHandleData->inUse = false;
       uv_timer_start(timerHandle, timerCallback, curlBuffer, curlBuffer);
+
 
       free(ind);
       curl_multi_remove_handle(curl_handle, easy_handle);
@@ -335,12 +339,12 @@ static int handle_socket(CURL *easy, curl_socket_t s, int action, void *userp,
 // -------------------------------------------------------------------------------------------------------------------
 
 // Downloads contents from urls to contentMap in parallel
-void runDownloadsFromMap(std::unordered_map<std::string, std::string*> *urlContentMap)
+void runDownloadsFromMap(std::unordered_map<std::string, std::string*> *urlContentMap, int queueIndex)
 {
   for (std::pair<std::string, std::string*> urlContentPair : *urlContentMap)
   {
     std::string url = urlContentPair.first;
-    startDownload(urlContentPair.second, url);
+    startDownload(urlContentPair.second, url, queueIndex);
   }
 }
 
@@ -353,19 +357,18 @@ std::unordered_map<std::string, std::string*> *urlVectorToUrlContentMap(std::vec
   return urlContentMap;
 }
 
-void checkDownloadTasks(uv_prepare_t *handle)
+void checkDownloadTasks(uv_timer_t *handle)
 {
-  if (loopIterations-- == 0)
+  if (closeLoop)
   {
-    uv_prepare_stop(handle);
-    std::cout << "STOPPED POLLING\n";
+    uv_timer_stop(handle);
   }
 
   for(int i = 0; i < queueStatus.size(); i++)
   {
     if (queueStatus[i] == 0)
     {
-      runDownloadsFromMap(urlContentMapQueue[i]);
+      runDownloadsFromMap(urlContentMapQueue[i], i);
       queueStatus[i] = 1;
     }
   }
@@ -395,14 +398,19 @@ int oldMain()
 
   // Testing handle that runs every loop
   // uv_prepare_t *handle = (uv_prepare_t*)malloc(sizeof(uv_prepare_t)); // handle that runs once every loop
-  uv_prepare_t timerHandle;  // handle that runs once every loop
-  uv_prepare_init(loop, &timerHandle);
-  uv_prepare_start(&timerHandle, checkDownloadTasks);
+  // uv_prepare_t timerHandle;  // handle that runs once every loop
+  // uv_prepare_init(loop, &timerHandle);
+  // uv_prepare_start(&timerHandle, checkDownloadTasks);
 
   // Testing timer handle
   // uv_timer_t timerHandle;
   // uv_timer_init(loop, &timerHandle);
   // uv_timer_start(&timerHandle, timerCallback, curlBuffer, 0);
+
+  uv_timer_t timerCheckQueueHandle;
+  uv_timer_init(loop, &timerCheckQueueHandle);
+  uv_timer_start(&timerCheckQueueHandle, checkDownloadTasks, 200, 200);
+
 
   // Preparing curl and timeout
   if (curl_global_init(CURL_GLOBAL_ALL))
@@ -417,7 +425,6 @@ int oldMain()
   curl_multi_setopt(curl_handle, CURLMOPT_TIMERFUNCTION, start_timeout);
 
   uv_run(loop, UV_RUN_DEFAULT);
-
 
   // Cleaning up curl
   for (std::pair<int, CurlHandleData*> indexHandleDataPair : handleDataMap) {
@@ -449,6 +456,7 @@ int addDownloadTask(std::vector<std::string> urlVector)
   // mutex?
   urlContentMapQueue.push_back(urlContentMap);
   queueStatus.push_back(0);
+  queueProgress.push_back(0);
   // end mutex?
 
   // 0 - queued
@@ -491,10 +499,17 @@ int main()
     int secondResponse = addDownloadTask(urlVec2);
   }
 
-  t1.join();
+  while (queueProgress[0] != 2 || queueProgress[1] != 2) {
+    sleep(1);
+  }
 
-  // printContents(getResponse(0));
-  // printContents(getResponse(1));
+  std::cout << "Signalled to close loop\n";
+  closeLoop = true;
+  t1.join();
+  std::cout << "All worked well!\n";
+
+  printContents(getResponse(0));
+  printContents(getResponse(1));
   // std::cout << "Response:\n" << *getResponse(0, "http://ccdb-test.cern.ch:8080/latest/TPC/.*");
 
   return 0;
