@@ -25,6 +25,10 @@ TODO:
 - Maybe better interface for requesting downloads?
 - multiple uv loop threads
 
+Questions:
+
+- are url's for requests unique?
+
 */
 
 
@@ -129,12 +133,13 @@ int createCurlHandleIndex()
   return i;
 }
 
-CurlHandleData* createCurlHandleData(CURL *handle)
+CurlHandleData* createCurlHandleData(CURL *handle, int queueIndex)
 {
   auto context = (CurlHandleData*)malloc(sizeof(CurlHandleData));
   context->curlHandle = handle;
   context->inUse = true;
   context->index = createCurlHandleIndex();
+  context->queueIndex = queueIndex;
 
   auto timerHandleData = (UvTimerHandleData*)malloc(sizeof(UvTimerHandleData));
   timerHandleData->curlHandleData = context;
@@ -167,7 +172,7 @@ static void startDownload(std::string *dst, std::string url, int queueInd)
     if (!handleData->inUse) {
       handleData->inUse = true;
       handleData->queueIndex = queueInd;
-      // Refreshing timer
+      // Setting timer to refresh
       auto data = (UvTimerHandleData *)(handleData->timerHandle.data);
       data->curlHandleData->inUse = true;
       data->refresh = true;
@@ -182,10 +187,9 @@ static void startDownload(std::string *dst, std::string url, int queueInd)
   // In no unused handle found then create handle
   if (handle == nullptr) {
     handle = curl_easy_init();
-    auto chc = createCurlHandleData(handle);
-    chc->queueIndex = queueInd;
-
+    auto chc = createCurlHandleData(handle, queueInd);
     handleDataMap[chc->index] = chc;
+
     *handleIndex = chc->index;
     std::cout << "Creating handle at index: " << chc->index << "\n";
   }
