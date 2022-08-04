@@ -33,7 +33,7 @@ TODO:
 */
 
 
-uint64_t curlBuffer = 5000; // miliseconds durning which handle will be left open after last call
+uint64_t curlBuffer = 1000; // miliseconds durning which handle will be left open after last call
 int loopIterations = 5000;
 bool twoBatches = true;
 uv_loop_t *loop;
@@ -76,21 +76,24 @@ void timerCallback(uv_timer_t *handle)
   if (!timerData->inUse) {
     if (timerData->refresh) {
       timerData->refresh = false;
-      std::cout << "Handle about to expire\n";
+      // std::cout << "Handle about to expire\n";
     } else {
       uv_timer_stop(handle);
       // std::cout << "Handle expired\n";
       
       auto curlHandleContext = timerData->curlHandleContext;
-      handleContextMap[curlHandleContext->index]->expired = true;
-      std::cout << "Setting as expired at index: " << curlHandleContext->index << "\n";
+      // handleContextMap[curlHandleContext->index]->expired = true;
+      int index = curlHandleContext->index;
+      std::cout << "Handle expired at index: " << index << "\n";
+      free(handleContextMap[index]);
+      handleContextMap.erase(index);
       return;
     }
   }
 
   if (timerData->refresh) {
     uv_timer_again(handle);
-    std::cout << "Handle bounced\n";
+    // std::cout << "Handle bounced\n";
   }
 }
 
@@ -122,6 +125,7 @@ static void destroy_curl_context(curl_context_t *context)
   uv_close((uv_handle_t *)&context->poll_handle, curl_close_cb);
 }
 
+// Obviously not safe for int overflow. Needs fixing!
 int createNewCurlHandleContextIndex()
 {
   int i = 0;
@@ -176,7 +180,7 @@ static void startDownload(std::string *dst, std::string url)
 
       handle = handleContext->curlHandle;
       *handleIndex = indexContextPair.first;
-      std::cout << "REUSING HANDLE\n";
+      std::cout << "Reusing handle at index: " << handleContext->index << "\n";
       break;
     }
   }
@@ -189,6 +193,7 @@ static void startDownload(std::string *dst, std::string url)
     handleContextMap[chc->index] = chc;
     //ind = (int*)malloc(sizeof(int));
     *handleIndex = chc->index;
+      std::cout << "Creating handle at index: " << chc->index << "\n";
   }
 
   curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
