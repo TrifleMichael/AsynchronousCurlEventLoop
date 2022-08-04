@@ -34,6 +34,8 @@ TODO:
 
 
 uint64_t curlBuffer = 5000; // miliseconds durning which handle will be left open after last call
+int loopIterations = 5000;
+bool twoBatches = true;
 uv_loop_t *loop;
 CURLM *curl_handle;
 uv_timer_t timeout;
@@ -51,6 +53,7 @@ typedef struct CurlHandleContext
   int index;
   CURL* curlHandle;
   uv_timer_t timerHandle;
+  bool expired = false;
 } CurlHandleContext;
 
 typedef struct UvTimerHandleData
@@ -68,23 +71,24 @@ std::vector<CurlHandleContext*> handleVector;
 
 void timerCallback(uv_timer_t *handle)
 {
-  auto data = (UvTimerHandleData*)(handle->data);
+  auto timerData = (UvTimerHandleData*)(handle->data);
 
-  if (!data->inUse) {
-    if (data->refresh) {
-      data->refresh = false;
+  if (!timerData->inUse) {
+    if (timerData->refresh) {
+      timerData->refresh = false;
       std::cout << "Handle about to expire\n";
     } else {
       uv_timer_stop(handle);
-      std::cout << "Handle expired\n";
+      // std::cout << "Handle expired\n";
       
-      auto curlHandleContext = data->curlHandleContext;
-      std::cout << "curlHandleContext->index: " << curlHandleContext->index << "\n";
+      auto curlHandleContext = timerData->curlHandleContext;
+      handleVector[curlHandleContext->index]->expired = true;
+      std::cout << "Setting as expired at index: " << curlHandleContext->index << "\n";
       return;
     }
   }
 
-  if (data->refresh) {
+  if (timerData->refresh) {
     uv_timer_again(handle);
     std::cout << "Handle bounced\n";
   }
@@ -130,9 +134,6 @@ CurlHandleContext* createCurlHandleContext(CURL *handle, int index)
   timerHandleData->curlHandleContext = context;
   context->timerHandle.data = timerHandleData;
 
-
-  std::cout << "timerHandleData->curlHandleContext: " << timerHandleData->curlHandleContext << "\n";
-
   uv_timer_init(loop, &(context->timerHandle));
 
   return context;
@@ -156,11 +157,11 @@ static void startDownload(std::string *dst, std::string url)
 
   // Search for unused handle
   for(int i = 0; i < handleVector.size(); i++) {
-    if (!handleVector[i]->inUse) {
+    if (!handleVector[i]->inUse && !handleVector[i]->expired) {
       handleVector[i]->inUse = true;
 
       // Refreshing timer
-      UvTimerHandleData *data = (UvTimerHandleData*)(&(handleVector[i]->timerHandle.data));
+      auto data = (UvTimerHandleData*)(handleVector[i]->timerHandle.data);
       data->inUse = true;
       data->refresh = true;
 
@@ -221,8 +222,7 @@ static void check_multi_info(void)
 
       // Start timer for removal
       uv_timer_t *timerHandle = &(handleVector[*ind]->timerHandle);
-      // std::cout << "Data: " << timerHandle->data << "\n";
-      UvTimerHandleData *data = (UvTimerHandleData*)timerHandle->data;
+      auto data = (UvTimerHandleData*)timerHandle->data;
       data->refresh = true;
       data->inUse = false;
       uv_timer_start(timerHandle, timerCallback, curlBuffer, curlBuffer);
@@ -346,10 +346,9 @@ std::unordered_map<std::string, std::string*> *urlVectorToUrlContentMap(std::vec
   return urlContentMap;
 }
 
-int tries = 1000;
 void checkDownloadTasks(uv_prepare_t *handle)
 {
-  if (tries-- == 0)
+  if (loopIterations-- == 0)
   {
     uv_prepare_stop(handle);
     std::cout << "STOPPED POLLING\n";
@@ -477,12 +476,14 @@ int main()
   urlVec.push_back("http://ccdb-test.cern.ch:8080/latest/TPC/.*");
   int firstResponse = addDownloadTask(urlVec);
 
-  // sleep(2);
-  // std::cout << "Pushing second!\n";
-  // std::vector<std::string> urlVec2;
-  // urlVec2.push_back("http://alice-ccdb.cern.ch/browse/TPC/.*");
-  // urlVec2.push_back("http://alice-ccdb.cern.ch/latest/TPC/.*");
-  // int secondResponse = addDownloadTask(urlVec2);
+  if (twoBatches) {
+    sleep(2);
+    std::cout << "Pushing second!\n";
+    std::vector<std::string> urlVec2;
+    urlVec2.push_back("http://alice-ccdb.cern.ch/browse/TPC/.*");
+    urlVec2.push_back("http://alice-ccdb.cern.ch/latest/TPC/.*");
+    int secondResponse = addDownloadTask(urlVec2);
+  }
 
   t1.join();
 
