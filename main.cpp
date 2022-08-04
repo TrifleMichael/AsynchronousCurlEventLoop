@@ -57,7 +57,7 @@ typedef struct UvTimerHandleData
 {
   bool refresh = true;
   bool inUse = true;
-  // CurlHandleContext *curlHandleContext = nullptr;
+  CurlHandleContext *curlHandleContext = nullptr;
 } UvTimerHandleData;
 
 std::vector<std::unordered_map<std::string, std::string*>*> urlContentMapQueue;
@@ -68,7 +68,7 @@ std::vector<CurlHandleContext*> handleVector;
 
 void timerCallback(uv_timer_t *handle)
 {
-  UvTimerHandleData* data = (UvTimerHandleData*)(handle->data);
+  auto data = (UvTimerHandleData*)(handle->data);
 
   if (!data->inUse) {
     if (data->refresh) {
@@ -77,6 +77,9 @@ void timerCallback(uv_timer_t *handle)
     } else {
       uv_timer_stop(handle);
       std::cout << "Handle expired\n";
+      
+      auto curlHandleContext = data->curlHandleContext;
+      std::cout << "curlHandleContext->index: " << curlHandleContext->index << "\n";
       return;
     }
   }
@@ -117,14 +120,19 @@ static void destroy_curl_context(curl_context_t *context)
 
 CurlHandleContext* createCurlHandleContext(CURL *handle, int index)
 {
-  auto context = new CurlHandleContext();
+  // auto context = new CurlHandleContext();
+  auto context = (CurlHandleContext*)malloc(sizeof(CurlHandleContext));
   context->curlHandle = handle;
   context->inUse = true;
   context->index = index;
 
-  auto data = new UvTimerHandleData();
-  // data->curlHandleContext = context;
-  context->timerHandle.data = data;
+  auto timerHandleData = (UvTimerHandleData*)malloc(sizeof(UvTimerHandleData));
+  timerHandleData->curlHandleContext = context;
+  context->timerHandle.data = timerHandleData;
+
+
+  std::cout << "timerHandleData->curlHandleContext: " << timerHandleData->curlHandleContext << "\n";
+
   uv_timer_init(loop, &(context->timerHandle));
 
   return context;
@@ -213,6 +221,7 @@ static void check_multi_info(void)
 
       // Start timer for removal
       uv_timer_t *timerHandle = &(handleVector[*ind]->timerHandle);
+      // std::cout << "Data: " << timerHandle->data << "\n";
       UvTimerHandleData *data = (UvTimerHandleData*)timerHandle->data;
       data->refresh = true;
       data->inUse = false;
@@ -337,7 +346,7 @@ std::unordered_map<std::string, std::string*> *urlVectorToUrlContentMap(std::vec
   return urlContentMap;
 }
 
-int tries = 10000;
+int tries = 1000;
 void checkDownloadTasks(uv_prepare_t *handle)
 {
   if (tries-- == 0)
@@ -468,12 +477,12 @@ int main()
   urlVec.push_back("http://ccdb-test.cern.ch:8080/latest/TPC/.*");
   int firstResponse = addDownloadTask(urlVec);
 
-  sleep(2);
-  std::cout << "Pushing second!\n";
-  std::vector<std::string> urlVec2;
-  urlVec2.push_back("http://alice-ccdb.cern.ch/browse/TPC/.*");
-  urlVec2.push_back("http://alice-ccdb.cern.ch/latest/TPC/.*");
-  int secondResponse = addDownloadTask(urlVec2);
+  // sleep(2);
+  // std::cout << "Pushing second!\n";
+  // std::vector<std::string> urlVec2;
+  // urlVec2.push_back("http://alice-ccdb.cern.ch/browse/TPC/.*");
+  // urlVec2.push_back("http://alice-ccdb.cern.ch/latest/TPC/.*");
+  // int secondResponse = addDownloadTask(urlVec2);
 
   t1.join();
 
