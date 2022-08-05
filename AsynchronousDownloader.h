@@ -73,7 +73,7 @@ public:
   static void destroyCurlContext(curl_context_t *context);
   static int createCurlHandleIndex(std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap);
   static CurlHandleData *createCurlHandleData(CURL *handle, int queueIndex, std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap, uv_loop_t *loop);
-  static size_t myCallback(void *contents, size_t size, size_t nmemb, std::string *dst);
+  static size_t curlCallback(void *contents, size_t size, size_t nmemb, std::string *dst);
   static void startDownload(std::string *dst, std::string url, int queueInd, std::unordered_map<int, CurlHandleData *> *handleDataMap, uv_loop_t *loop, CURLM *curlMultiHandle);
   void checkMultiInfo(void);
   static int startTimeout(CURLM *multi, long timeout_ms, void *userp);
@@ -86,6 +86,7 @@ public:
   int addDownloadTask(std::vector<std::string> urlVector);
   std::unordered_map<std::string, std::string *> *getResponse(int index);
   std::string *getResponse(int index, std::string url);
+  void startAlternativeDownload(CURL* handle);
 };
 
 #endif
