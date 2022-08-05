@@ -63,6 +63,13 @@ public:
     CURLM *curlm;
   } DataForSocket;
 
+  typedef struct PerformData
+  {
+    bool asynchronous;
+    std::condition_variable *cv;
+    bool *completionFlag;
+  } PerformData;
+
   std::vector<std::unordered_map<std::string, std::string *> *> urlContentMapQueue;
   std::vector<int> queueStatus;
   std::vector<int> queueProgress;
@@ -87,6 +94,8 @@ public:
   std::unordered_map<std::string, std::string *> *getResponse(int index);
   std::string *getResponse(int index, std::string url);
   bool init();
+  void blockingPerform(CURL* handle);
+  void asynchPerform(CURL* handle, bool *completionFlag);
 };
 
 #endif

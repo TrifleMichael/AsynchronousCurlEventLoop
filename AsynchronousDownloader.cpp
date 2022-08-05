@@ -268,10 +268,19 @@ void AsynchronousDownloader::checkMultiInfo(void)
       // uv_timer_start(timerHandle, timerCallbackForHandle, curlBuffer, curlBuffer);
 
       // free(ind);
-      std::condition_variable  *cv;
-      curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &cv);  
+      PerformData *data;
+      curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &data); 
       curl_multi_remove_handle(curlMultiHandle, easy_handle);
-      cv->notify_all();
+
+      if (!data->asynchronous)
+      {
+        data->cv->notify_all();
+      }
+      else
+      {
+        *(data->completionFlag) = true;
+        free(data);
+      }
       // curl_easy_cleanup(easy_handle);
     }
     break;
@@ -458,16 +467,31 @@ std::string *AsynchronousDownloader::getResponse(int index, std::string url)
   return (*getResponse(index))[url];
 }
 
-void blockingPerform(CURL* handle, AsynchronousDownloader *AD)
+void AsynchronousDownloader::blockingPerform(CURL* handle)
 {
   std::condition_variable cv;
   std::mutex cv_m;
   std::unique_lock<std::mutex> lk(cv_m);
 
-  curl_easy_setopt(handle, CURLOPT_PRIVATE, &cv);
-  curl_multi_add_handle(AD->curlMultiHandle, handle);
+  AsynchronousDownloader::PerformData data;
+  data.asynchronous = false;
+  data.cv = &cv;
+
+  curl_easy_setopt(handle, CURLOPT_PRIVATE, &data);
+  curl_multi_add_handle(curlMultiHandle, handle);
 
   cv.wait(lk);
+}
+
+void AsynchronousDownloader::asynchPerform(CURL* handle, bool *completionFlag)
+{
+
+  auto data = new AsynchronousDownloader::PerformData();
+  data->asynchronous = true;
+  data->completionFlag = completionFlag;
+
+  curl_easy_setopt(handle, CURLOPT_PRIVATE, data);
+  curl_multi_add_handle(curlMultiHandle, handle);
 }
 
 size_t testCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
@@ -484,7 +508,6 @@ CURL* prepareTestHandle(std::string* dst)
 {
   CURL* handle = curl_easy_init();
   curl_easy_setopt(handle, CURLOPT_URL, "http://alice-ccdb.cern.ch/latest/TPC/.*");
-  // curl_easy_setopt(handle, CURLOPT_URL, "https://www.google.com/?rand=131");
   curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, testCallback);
   curl_easy_setopt(handle, CURLOPT_WRITEDATA, dst);
   return handle;
@@ -503,51 +526,18 @@ int main()
   AsynchronousDownloader *AD = new AsynchronousDownloader();
   AD->init();
   std::thread t1(&AsynchronousDownloader::asynchLoop, AD);
-  sleep(1);
+
   std::cout << "About to blocking perform\n";
-  blockingPerform(testHandle, AD);
+  AD->blockingPerform(testHandle);
+
+  bool completionFlag = false;
+  AD->asynchPerform(testHandle, &completionFlag);
+
+  while (!completionFlag) sleep(1);
 
   std::cout << "Signalling end\n";
   AD->closeLoop = true;
   t1.join();
-  std::cout << "Final: " << dst.substr(0, 1000) << "\n";
+  // std::cout << "Final: " << dst.substr(0, 1000) << "\n";
   return 0;
 }
-
-// bool twoBatches = true;
-// int main()
-// {
-//   AsynchronousDownloader *AS = new AsynchronousDownloader();
-//   std::thread t1(&AsynchronousDownloader::oldMain, AS);
-
-//   std::vector<std::string> urlVec;
-//   urlVec.push_back("http://ccdb-test.cern.ch:8080/browse/TPC/.*");
-//   urlVec.push_back("http://ccdb-test.cern.ch:8080/latest/TPC/.*");
-//   int firstResponse = AS->addDownloadTask(urlVec);
-
-//   if (twoBatches)
-//   {
-//     sleep(2);
-//     std::cout << "Pushing second!\n";
-//     std::vector<std::string> urlVec2;
-//     urlVec2.push_back("http://alice-ccdb.cern.ch/browse/TPC/.*");
-//     urlVec2.push_back("http://alice-ccdb.cern.ch/latest/TPC/.*");
-//     int secondResponse = AS->addDownloadTask(urlVec2);
-//   }
-
-//   while (AS->queueProgress[0] != 2 || AS->queueProgress[1] != 2)
-//   {
-//     sleep(1);
-//   }
-
-//   std::cout << "Signalled to close loop\n";
-//   AS->closeLoop = true;
-//   t1.join();
-//   std::cout << "All worked well!\n";
-
-//   // AS->printContents(AS->getResponse(0));
-//   // AS->printContents(AS->getResponse(1));
-//   // std::cout << "Response:\n" << *getResponse(0, "http://ccdb-test.cern.ch:8080/latest/TPC/.*");
-
-//   return 0;
-// }
