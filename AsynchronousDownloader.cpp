@@ -10,6 +10,7 @@
 #include <thread>     // get_id
 #include <vector>
 #include <unordered_map>
+#include <condition_variable>
 
 #include <chrono>   // time measurement
 #include <unistd.h> // time measurement
@@ -267,10 +268,10 @@ void AsynchronousDownloader::checkMultiInfo(void)
       // uv_timer_start(timerHandle, timerCallbackForHandle, curlBuffer, curlBuffer);
 
       // free(ind);
-      bool *completionFlag;
-      curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &completionFlag);
-      *completionFlag = true;      
+      std::condition_variable  *cv;
+      curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &cv);  
       curl_multi_remove_handle(curlMultiHandle, easy_handle);
+      cv->notify_all();
       // curl_easy_cleanup(easy_handle);
     }
     break;
@@ -459,15 +460,18 @@ std::string *AsynchronousDownloader::getResponse(int index, std::string url)
 
 void blockingPerform(CURL* handle, AsynchronousDownloader *AD)
 {
-  bool completionFlag = false;
-  curl_easy_setopt(handle, CURLOPT_PRIVATE, &completionFlag);
+  std::condition_variable cv;
+  std::mutex cv_m;
+  std::unique_lock<std::mutex> lk(cv_m);
+
+  curl_easy_setopt(handle, CURLOPT_PRIVATE, &cv);
   curl_multi_add_handle(AD->curlMultiHandle, handle);
-  while (!completionFlag) sleep(0.1); // alternative mechanism to sleep?
+
+  cv.wait(lk);
 }
 
 size_t testCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
 {
-  std::cout << "Callback\n";
   char *conts = (char *)contents;
   for (int i = 0; i < nmemb; i++)
   {
@@ -506,7 +510,7 @@ int main()
   std::cout << "Signalling end\n";
   AD->closeLoop = true;
   t1.join();
-  std::cout << "Final: " << dst << "\n";
+  std::cout << "Final: " << dst.substr(0, 1000) << "\n";
   return 0;
 }
 
