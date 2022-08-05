@@ -34,10 +34,11 @@ class AsynchronousDownloader
     CURLM *curl_handle = nullptr;
     uv_timer_t *timeout;
 
-    typedef struct curl_context_s
+typedef struct curl_context_s
 {
   uv_poll_t poll_handle;
   curl_socket_t sockfd;
+  AsynchronousDownloader* objPtr = nullptr;
 } curl_context_t;
 
 typedef struct CurlHandleData
@@ -56,6 +57,11 @@ typedef struct UvTimerHandleData
   AsynchronousDownloader *downloaderPtr;
 } UvTimerHandleData;
 
+typedef struct DataForSocket
+{
+  AsynchronousDownloader *objPtr;
+  CURLM *curlm;
+} DataForSocket;
 
 std::vector<std::unordered_map<std::string, std::string*>*> urlContentMapQueue;
 std::vector<int> queueStatus;
@@ -71,7 +77,7 @@ static size_t myCallback(void *contents, size_t size, size_t nmemb, std::string 
 static void startDownload(std::string *dst, std::string url, int queueInd, std::unordered_map<int, CurlHandleData*> *handleDataMap, uv_loop_t *loop, CURLM *curl_handle);
 void check_multi_info(void);
 static int start_timeout(CURLM *multi, long timeout_ms, void *userp);
-static int handle_socket(CURL *easy, curl_socket_t s, int action, void *userp, void *socketp, CURLM* curl_handle);
+static int handle_socket(CURL *easy, curl_socket_t s, int action, void *userp, void *socketp);
 void runDownloadsFromMap(std::unordered_map<std::string, std::string*> *urlContentMap, int queueIndex);
 std::unordered_map<std::string, std::string*>* urlVectorToUrlContentMap(std::vector<std::string> urlVector);
 void printBar();
