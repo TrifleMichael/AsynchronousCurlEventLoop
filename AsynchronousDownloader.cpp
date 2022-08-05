@@ -378,44 +378,36 @@ void AsynchronousDownloader::printContents(std::unordered_map<std::string, std::
   }
 }
 
-int AsynchronousDownloader::oldMain()
+bool AsynchronousDownloader::init()
 {
+  // Preparing loop timer
   timeout = new uv_timer_t();
   timeout->data = this;
-  auto start = std::chrono::steady_clock::now();
-
   loop = uv_default_loop();
-
-  // Testing handle that runs every loop
-  // uv_prepare_t *handle = (uv_prepare_t*)malloc(sizeof(uv_prepare_t)); // handle that runs once every loop
-  // uv_prepare_t timerHandle;  // handle that runs once every loop
-  // uv_prepare_init(loop, &timerHandle);
-  // uv_prepare_start(&timerHandle, checkDownloadTasks);
-
-  // Testing timer handle
-  // uv_timer_t timerHandle;
-  // uv_timer_init(loop, &timerHandle);
-  // uv_timer_start(&timerHandle, timerCallbackForHandle, curlBuffer, 0);
-
-  // Preparing curl and timeout
-
   uv_timer_init(loop, timeout);
 
+  // Preparing curl handle
   curlMultiHandle = curl_multi_init();
   curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETFUNCTION, handleSocket);
-  DataForSocket socketData;
-  socketData.curlm = curlMultiHandle;
-  socketData.objPtr = this;
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETDATA, &socketData);
+  auto socketData = new DataForSocket();
+  socketData->curlm = curlMultiHandle;
+  socketData->objPtr = this;
+  curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETDATA, socketData);
   curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERFUNCTION, startTimeout);
   curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERDATA, timeout);
 
-  uv_timer_t timerCheckQueueHandle;
-  timerCheckQueueHandle.data = this;
-  uv_timer_init(loop, &timerCheckQueueHandle);
-  uv_timer_start(&timerCheckQueueHandle, checkDownloadTasks, 200, 200);
+  // Preparing queue checking timer
+  auto timerCheckQueueHandle = new uv_timer_t();
+  timerCheckQueueHandle->data = this;
+  uv_timer_init(loop, timerCheckQueueHandle);
+  uv_timer_start(timerCheckQueueHandle, checkDownloadTasks, 200, 200);
 
-  std::cout << "Running loop\n";
+  return true;
+}
+
+void AsynchronousDownloader::asynchLoop()
+{
+  std::cout << "Loop starting\n";
   uv_run(loop, UV_RUN_DEFAULT);
   std::cout << "Loop finished\n";
 
@@ -426,21 +418,12 @@ int AsynchronousDownloader::oldMain()
   }
   curl_multi_cleanup(curlMultiHandle);
 
-  // Showing execution time
-  // auto end = std::chrono::steady_clock::now();
-  // printBar();
-  // std::cout << "Elapsed time in microseconds: "
-  //       << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
-  //       << " µs" << std::endl;
-
   // // Cleaning UV loop
   // std::cout << "\nIs loop alive? " << uv_loop_alive(loop) << "\n";
   // uv_stop(loop);
   // std::cout << "Is loop alive? " << uv_loop_alive(loop) << "\n";
   // std::cout << "Loop closed properly? " << (uv_loop_close(loop) != UV_EBUSY)  << "\n";
   // free(loop);
-
-  return 0;
 }
 
 int AsynchronousDownloader::addDownloadTask(std::vector<std::string> urlVector)
@@ -474,22 +457,12 @@ std::string *AsynchronousDownloader::getResponse(int index, std::string url)
   return (*getResponse(index))[url];
 }
 
-void AsynchronousDownloader::startAlternativeDownload(CURL* handle)
-{
-
-  // curl_easy_setopt(handle, CURLOPT_PRIVATE, handleIndex); // what data to store?
-  std::cout << "Alternative download ran\n";
-  curl_multi_add_handle(curlMultiHandle, handle);
-}
-
 void blockingPerform(CURL* handle, AsynchronousDownloader *AD)
 {
   bool completionFlag = false;
   curl_easy_setopt(handle, CURLOPT_PRIVATE, &completionFlag);
   curl_multi_add_handle(AD->curlMultiHandle, handle);
-  std::cout << "D\n";
-  while (!completionFlag) sleep(1);
-  std::cout << "E\n";
+  while (!completionFlag) sleep(0.1); // alternative mechanism to sleep?
 }
 
 size_t testCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
@@ -524,7 +497,8 @@ int main()
   CURL* testHandle = prepareTestHandle(&dst);
 
   AsynchronousDownloader *AD = new AsynchronousDownloader();
-  std::thread t1(&AsynchronousDownloader::oldMain, AD);
+  AD->init();
+  std::thread t1(&AsynchronousDownloader::asynchLoop, AD);
   sleep(1);
   std::cout << "About to blocking perform\n";
   blockingPerform(testHandle, AD);

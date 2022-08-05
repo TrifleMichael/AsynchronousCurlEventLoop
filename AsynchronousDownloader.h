@@ -82,11 +82,11 @@ public:
   std::unordered_map<std::string, std::string *> *urlVectorToUrlContentMap(std::vector<std::string> urlVector);
   void printBar();
   void printContents(std::unordered_map<std::string, std::string *> *urlContentMap);
-  int oldMain();
+  void asynchLoop();
   int addDownloadTask(std::vector<std::string> urlVector);
   std::unordered_map<std::string, std::string *> *getResponse(int index);
   std::string *getResponse(int index, std::string url);
-  void startAlternativeDownload(CURL* handle);
+  bool init();
 };
 
 #endif
