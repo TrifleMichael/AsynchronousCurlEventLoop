@@ -55,13 +55,12 @@ void curl_perform(uv_poll_t *req, int status, int events)
 {
   int running_handles;
   int flags = 0;
-  AsynchronousDownloader::curl_context_t *context;
   if (events & UV_READABLE)
     flags |= CURL_CSELECT_IN;
   if (events & UV_WRITABLE)
     flags |= CURL_CSELECT_OUT;
 
-  context = (AsynchronousDownloader::curl_context_t *)req->data;
+  auto context = (AsynchronousDownloader::curl_context_t *)req->data;
 
   curl_multi_socket_action(context->objPtr->curlMultiHandle, context->sockfd, flags,
                            &running_handles);
@@ -160,10 +159,11 @@ void AsynchronousDownloader::checkMultiInfo(void)
       curl_easy_getinfo(easy_handle, CURLINFO_EFFECTIVE_URL, &done_url);
       printf("%s DONE\n", done_url);
 
-      // free(ind);
       PerformData *data;
       curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &data); 
       curl_multi_remove_handle(curlMultiHandle, easy_handle);
+
+      curl_easy_getinfo(easy_handle,  CURLINFO_RESPONSE_CODE, data->codeDestination);
 
       if (!data->asynchronous)
       {
@@ -304,11 +304,6 @@ void AsynchronousDownloader::asynchLoop()
   uv_run(loop, UV_RUN_DEFAULT);
   std::cout << "Loop finished\n";
 
-  // Cleaning up curl
-  // for (std::pair<int, CurlHandleData *> indexHandleDataPair : handleDataMap)
-  // {
-  //   curl_easy_cleanup(indexHandleDataPair.second->curlHandle);
-  // }
   curl_multi_cleanup(curlMultiHandle);
 
   // // Cleaning UV loop
@@ -319,31 +314,37 @@ void AsynchronousDownloader::asynchLoop()
   // free(loop);
 }
 
-void AsynchronousDownloader::blockingPerform(CURL* handle)
+CURLcode *AsynchronousDownloader::blockingPerform(CURL* handle)
 {
   std::condition_variable cv;
   std::mutex cv_m;
   std::unique_lock<std::mutex> lk(cv_m);
 
   AsynchronousDownloader::PerformData data;
+  auto code = new CURLcode();
+  // CURLcode code;
+  data.codeDestination = code;
   data.asynchronous = false;
   data.cv = &cv;
 
   curl_easy_setopt(handle, CURLOPT_PRIVATE, &data);
   curl_multi_add_handle(curlMultiHandle, handle);
-
   cv.wait(lk);
+  return code;
 }
 
-void AsynchronousDownloader::asynchPerform(CURL* handle, bool *completionFlag)
+CURLcode *AsynchronousDownloader::asynchPerform(CURL* handle, bool *completionFlag)
 {
 
   auto data = new AsynchronousDownloader::PerformData();
+  auto code = new CURLcode();
   data->asynchronous = true;
   data->completionFlag = completionFlag;
+  data->codeDestination = code;
 
   curl_easy_setopt(handle, CURLOPT_PRIVATE, data);
   curl_multi_add_handle(curlMultiHandle, handle);
+  return code;
 }
 
 size_t testCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
@@ -372,24 +373,32 @@ int main()
     fprintf(stderr, "Could not init curl\n");
     return 1;
   }
-  std::string dst;
-  CURL* testHandle = prepareTestHandle(&dst);
+  std::string dst1;
+  std::string dst2;
+  CURL* testHandle1 = prepareTestHandle(&dst1);
+  CURL* testHandle2 = prepareTestHandle(&dst2);
 
   AsynchronousDownloader *AD = new AsynchronousDownloader();
   AD->init();
   std::thread t1(&AsynchronousDownloader::asynchLoop, AD);
 
   std::cout << "About to blocking perform\n";
-  AD->blockingPerform(testHandle);
+  
+  auto blockingCode = AD->blockingPerform(testHandle1);
+  std::cout << "Blocking code: " << *blockingCode << "\n";
+  delete(blockingCode);
 
   bool completionFlag = false;
-  AD->asynchPerform(testHandle, &completionFlag);
-
+  auto asyncCode = AD->asynchPerform(testHandle2, &completionFlag);
   while (!completionFlag) sleep(1);
+  std::cout << "Asynch code: " << *asyncCode << "\n";
+  delete(asyncCode);
 
   std::cout << "Signalling end\n";
   AD->closeLoop = true;
   t1.join();
-  // std::cout << "Final: " << dst.substr(0, 1000) << "\n";
+  // std::cout << "Blocking:\n" << dst1.substr(0, 1000) << "\n";
+  // std::cout << "--------------------------------------------------\n";
+  // std::cout << "Asynch:\n" << dst2.substr(0, 1000) << "\n";
   return 0;
 }

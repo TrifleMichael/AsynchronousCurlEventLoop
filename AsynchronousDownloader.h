@@ -69,6 +69,7 @@ public:
     bool asynchronous;
     std::condition_variable *cv;
     bool *completionFlag;
+    CURLcode *codeDestination;
   } PerformData;
 
   static curl_context_t *createCurlContext(curl_socket_t sockfd, AsynchronousDownloader *objPtr);
@@ -87,8 +88,8 @@ public:
   std::unordered_map<std::string, std::string *> *getResponse(int index);
   std::string *getResponse(int index, std::string url);
   bool init();
-  void blockingPerform(CURL* handle);
-  void asynchPerform(CURL* handle, bool *completionFlag);
+  CURLcode *blockingPerform(CURL* handle);
+  CURLcode *asynchPerform(CURL* handle, bool *completionFlag);
 };
 
 #endif
