@@ -6,10 +6,8 @@
 #include <string>
 #include <iostream>
 #include <string.h>   //strcpy
-#include <functional> // std::ref
 #include <thread>     // get_id
 #include <vector>
-#include <unordered_map>
 #include <condition_variable>
 
 #include <chrono>   // time measurement
@@ -92,35 +90,6 @@ void AsynchronousDownloader::curlCloseCB(uv_handle_t *handle)
 void AsynchronousDownloader::destroyCurlContext(curl_context_t *context)
 {
   uv_close((uv_handle_t *)&context->poll_handle, curlCloseCB);
-}
-
-// Obviously not safe for int overflow. Needs fixing!
-int AsynchronousDownloader::createCurlHandleIndex(std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap)
-{
-  int i = 0;
-  for (std::pair<int, CurlHandleData *> indexHandleDataPair : *handleDataMap)
-  {
-    if (i <= indexHandleDataPair.first)
-      i = indexHandleDataPair.first + 1;
-  }
-  return i;
-}
-
-AsynchronousDownloader::CurlHandleData *AsynchronousDownloader::createCurlHandleData(CURL *handle, int queueIndex, std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap, uv_loop_t *loop)
-{
-  auto data = (CurlHandleData *)malloc(sizeof(CurlHandleData));
-  data->curlHandle = handle;
-  data->inUse = true;
-  data->index = createCurlHandleIndex(handleDataMap);
-  data->queueIndex = queueIndex;
-
-  auto timerHandleData = (UvTimerHandleData *)malloc(sizeof(UvTimerHandleData));
-  timerHandleData->curlHandleData = data;
-  data->timerHandle.data = timerHandleData;
-
-  uv_timer_init(loop, &(data->timerHandle));
-
-  return data;
 }
 
 void callbackWrappingFunction(void (*cbFun)(void*), void* data, bool* completionFlag)
@@ -243,26 +212,6 @@ int AsynchronousDownloader::handleSocket(CURL *easy, curl_socket_t s, int action
   }
 
   return 0;
-}
-
-// -------------------------------------------------------------------------------------------------------------------
-
-// Downloads contents from urls to contentMap in parallel
-
-void AsynchronousDownloader::printBar()
-{
-  std::cout << "------------------------------------\n";
-}
-
-void AsynchronousDownloader::printContents(std::unordered_map<std::string, std::string *> *urlContentMap)
-{
-  std::cout << "\n";
-  for (std::pair<std::string, std::string *> element : *urlContentMap)
-  {
-    printBar();
-    std::cout << element.first << "\n\n"
-              << (element.second)->substr(0, 1000) << std::endl;
-  }
 }
 
 void checkGlobals(uv_timer_t *handle)

@@ -7,10 +7,8 @@
 #include <string>
 #include <iostream>
 #include <string.h>   //strcpy
-#include <functional> // std::ref
 #include <thread>     // get_id
 #include <vector>
-#include <unordered_map>
 
 #include <chrono>   // time measurement
 #include <unistd.h> // time measurement
@@ -44,22 +42,6 @@ public:
     AsynchronousDownloader *objPtr = nullptr;
   } curl_context_t;
 
-  typedef struct CurlHandleData
-  {
-    bool inUse = true;
-    int index;
-    CURL *curlHandle;
-    uv_timer_t timerHandle;
-    int queueIndex;
-  } CurlHandleData;
-
-  typedef struct UvTimerHandleData
-  {
-    bool refresh = true;
-    CurlHandleData *curlHandleData = nullptr;
-    AsynchronousDownloader *downloaderPtr;
-  } UvTimerHandleData;
-
   typedef struct DataForSocket
   {
     AsynchronousDownloader *objPtr;
@@ -81,17 +63,10 @@ public:
   static curl_context_t *createCurlContext(curl_socket_t sockfd, AsynchronousDownloader *objPtr);
   static void curlCloseCB(uv_handle_t *handle);
   static void destroyCurlContext(curl_context_t *context);
-  static int createCurlHandleIndex(std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap);
-  static CurlHandleData *createCurlHandleData(CURL *handle, int queueIndex, std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap, uv_loop_t *loop);
   void checkMultiInfo(void);
   static int startTimeout(CURLM *multi, long timeout_ms, void *userp);
   static int handleSocket(CURL *easy, curl_socket_t s, int action, void *userp, void *socketp);
-  void printBar();
-  void printContents(std::unordered_map<std::string, std::string *> *urlContentMap);
   void asynchLoop();
-  int addDownloadTask(std::vector<std::string> urlVector);
-  std::unordered_map<std::string, std::string *> *getResponse(int index);
-  std::string *getResponse(int index, std::string url);
   bool init();
   CURLcode *blockingPerform(CURL* handle);
   CURLcode *blockingPerformWithCallback(CURL* handle, void (*cbFun)(void*), void* cbData);
