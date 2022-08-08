@@ -10,6 +10,7 @@
 #include <thread>     // get_id
 #include <vector>
 #include <unordered_map>
+#include <condition_variable>
 
 #include <chrono>   // time measurement
 #include <unistd.h> // time measurement
@@ -31,57 +32,12 @@ TODO:
 
 Questions:
 
-- are url's for requests unique?
+Information:
+
+- Curl multi handle automatically reuses connections. Source: https://everything.curl.dev/libcurl/connectionreuse
 
 */
 
-// Handles unique timer that checks for downloads. Timer is unique because it stores different data than all other timer handles, which is only the object reference.
-void checkDownloadTasks(uv_timer_t *handle)
-{
-  AsynchronousDownloader *AD = (AsynchronousDownloader *)handle->data;
-  if (AD->closeLoop)
-  {
-    uv_timer_stop(handle);
-  }
-
-  for (int i = 0; i < AD->queueStatus.size(); i++)
-  {
-    if (AD->queueStatus[i] == 0)
-    {
-      AD->runDownloadsFromMap(AD->urlContentMapQueue[i], i);
-      AD->queueStatus[i] = 1;
-    }
-  }
-}
-
-void timerCallbackForHandle(uv_timer_t *handle)
-{
-  auto timerData = (AsynchronousDownloader::UvTimerHandleData *)(handle->data);
-  AsynchronousDownloader *AD = timerData->downloaderPtr;
-
-  if (!timerData->curlHandleData->inUse)
-  {
-    if (timerData->refresh)
-    {
-      timerData->refresh = false;
-    }
-    else
-    {
-      uv_timer_stop(handle);
-      auto curlHandleData = timerData->curlHandleData;
-      int index = curlHandleData->index;
-      std::cout << "Handle expired at index: " << index << "\n";
-      free(AD->handleDataMap[index]);
-      AD->handleDataMap.erase(index);
-      return;
-    }
-  }
-
-  if (timerData->refresh)
-  {
-    uv_timer_again(handle);
-  }
-}
 
 void onTimeout(uv_timer_t *req)
 {
@@ -170,7 +126,7 @@ AsynchronousDownloader::CurlHandleData *AsynchronousDownloader::createCurlHandle
 }
 
 // Curl function for writing data from call to memory
-size_t AsynchronousDownloader::myCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
+size_t AsynchronousDownloader::curlCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
 {
   char *conts = (char *)contents;
   for (int i = 0; i < nmemb; i++)
@@ -178,51 +134,6 @@ size_t AsynchronousDownloader::myCallback(void *contents, size_t size, size_t nm
     (*dst) += *(conts++);
   }
   return size * nmemb;
-}
-
-// Adds easy handle that is ready to download data to multi handle
-void AsynchronousDownloader::startDownload(std::string *dst, std::string url, int queueInd, std::unordered_map<int, CurlHandleData *> *handleDataMap, uv_loop_t *loop, CURLM *curlMultiHandle)
-{
-  CURL *handle = nullptr;
-  int *handleIndex = (int *)malloc(sizeof(int));
-
-  // Search for unused handle
-  for (std::pair<int, CurlHandleData *> indexHandleDataPair : *handleDataMap)
-  {
-    auto handleData = indexHandleDataPair.second;
-    if (!handleData->inUse)
-    {
-      handleData->inUse = true;
-      handleData->queueIndex = queueInd;
-      // Setting timer to refresh
-      auto data = (UvTimerHandleData *)(handleData->timerHandle.data);
-      data->curlHandleData->inUse = true;
-      data->refresh = true;
-
-      handle = handleData->curlHandle;
-      *handleIndex = indexHandleDataPair.first;
-      std::cout << "Reusing handle at index: " << handleData->index << "\n";
-      break;
-    }
-  }
-
-  // In no unused handle found then create handle
-  if (handle == nullptr)
-  {
-    handle = curl_easy_init();
-    auto chc = createCurlHandleData(handle, queueInd, handleDataMap, loop);
-    (*handleDataMap)[chc->index] = chc;
-
-    *handleIndex = chc->index;
-    std::cout << "Creating handle at index: " << chc->index << "\n";
-  }
-
-  curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, myCallback);
-  curl_easy_setopt(handle, CURLOPT_WRITEDATA, dst);
-  curl_easy_setopt(handle, CURLOPT_PRIVATE, handleIndex);
-
-  curl_multi_add_handle(curlMultiHandle, handle);
 }
 
 // Removes used easy handles from multihandle
@@ -249,23 +160,20 @@ void AsynchronousDownloader::checkMultiInfo(void)
       curl_easy_getinfo(easy_handle, CURLINFO_EFFECTIVE_URL, &done_url);
       printf("%s DONE\n", done_url);
 
-      int *ind;
-      curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &ind);
-
-      // Mark handle as not in use
-      handleDataMap[*ind]->inUse = false;
-      queueProgress[handleDataMap[*ind]->queueIndex]++;
-
-      // Start timer for removal
-      uv_timer_t *timerHandle = &(handleDataMap[*ind]->timerHandle);
-      auto data = (UvTimerHandleData *)timerHandle->data;
-      data->refresh = true;
-      data->curlHandleData->inUse = false;
-      data->downloaderPtr = this;
-      uv_timer_start(timerHandle, timerCallbackForHandle, curlBuffer, curlBuffer);
-
-      free(ind);
+      // free(ind);
+      PerformData *data;
+      curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &data); 
       curl_multi_remove_handle(curlMultiHandle, easy_handle);
+
+      if (!data->asynchronous)
+      {
+        data->cv->notify_all();
+      }
+      else
+      {
+        *(data->completionFlag) = true;
+        free(data);
+      }
       // curl_easy_cleanup(easy_handle);
     }
     break;
@@ -338,24 +246,6 @@ int AsynchronousDownloader::handleSocket(CURL *easy, curl_socket_t s, int action
 // -------------------------------------------------------------------------------------------------------------------
 
 // Downloads contents from urls to contentMap in parallel
-void AsynchronousDownloader::runDownloadsFromMap(std::unordered_map<std::string, std::string *> *urlContentMap, int queueIndex)
-{
-  for (std::pair<std::string, std::string *> urlContentPair : *urlContentMap)
-  {
-    std::string url = urlContentPair.first;
-    startDownload(urlContentPair.second, url, queueIndex, &handleDataMap, loop, curlMultiHandle);
-  }
-}
-
-std::unordered_map<std::string, std::string *> *AsynchronousDownloader::urlVectorToUrlContentMap(std::vector<std::string> urlVector)
-{
-  auto urlContentMap = new std::unordered_map<std::string, std::string *>();
-  for (int i = 0; i < urlVector.size(); i++)
-  {
-    (*urlContentMap)[urlVector[i]] = new std::string();
-  }
-  return urlContentMap;
-}
 
 void AsynchronousDownloader::printBar()
 {
@@ -373,62 +263,53 @@ void AsynchronousDownloader::printContents(std::unordered_map<std::string, std::
   }
 }
 
-int AsynchronousDownloader::oldMain()
+void checkForClosing(uv_timer_t *handle)
 {
+  auto AD = (AsynchronousDownloader*)handle->data;
+  if(AD->closeLoop) {
+    uv_timer_stop(handle);
+  }
+}
+
+
+bool AsynchronousDownloader::init()
+{
+  // Preparing loop timer
   timeout = new uv_timer_t();
   timeout->data = this;
-  auto start = std::chrono::steady_clock::now();
-
   loop = uv_default_loop();
-
-  // Testing handle that runs every loop
-  // uv_prepare_t *handle = (uv_prepare_t*)malloc(sizeof(uv_prepare_t)); // handle that runs once every loop
-  // uv_prepare_t timerHandle;  // handle that runs once every loop
-  // uv_prepare_init(loop, &timerHandle);
-  // uv_prepare_start(&timerHandle, checkDownloadTasks);
-
-  // Testing timer handle
-  // uv_timer_t timerHandle;
-  // uv_timer_init(loop, &timerHandle);
-  // uv_timer_start(&timerHandle, timerCallbackForHandle, curlBuffer, 0);
-
-  // Preparing curl and timeout
-  if (curl_global_init(CURL_GLOBAL_ALL))
-  {
-    fprintf(stderr, "Could not init curl\n");
-    return 1;
-  }
   uv_timer_init(loop, timeout);
 
+  // Preparing curl handle
   curlMultiHandle = curl_multi_init();
   curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETFUNCTION, handleSocket);
-  DataForSocket socketData;
-  socketData.curlm = curlMultiHandle;
-  socketData.objPtr = this;
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETDATA, &socketData);
+  auto socketData = new DataForSocket();
+  socketData->curlm = curlMultiHandle;
+  socketData->objPtr = this;
+  curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETDATA, socketData);
   curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERFUNCTION, startTimeout);
   curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERDATA, timeout);
 
-  uv_timer_t timerCheckQueueHandle;
-  timerCheckQueueHandle.data = this;
-  uv_timer_init(loop, &timerCheckQueueHandle);
-  uv_timer_start(&timerCheckQueueHandle, checkDownloadTasks, 200, 200);
+  // Preparing queue checking timer
+  auto timerCheckQueueHandle = new uv_timer_t();
+  timerCheckQueueHandle->data = this;
+  uv_timer_init(loop, timerCheckQueueHandle);
+  uv_timer_start(timerCheckQueueHandle, checkForClosing, 200, 200);
 
+  return true;
+}
+void AsynchronousDownloader::asynchLoop()
+{
+  std::cout << "Loop starting\n";
   uv_run(loop, UV_RUN_DEFAULT);
+  std::cout << "Loop finished\n";
 
   // Cleaning up curl
-  for (std::pair<int, CurlHandleData *> indexHandleDataPair : handleDataMap)
-  {
-    curl_easy_cleanup(indexHandleDataPair.second->curlHandle);
-  }
+  // for (std::pair<int, CurlHandleData *> indexHandleDataPair : handleDataMap)
+  // {
+  //   curl_easy_cleanup(indexHandleDataPair.second->curlHandle);
+  // }
   curl_multi_cleanup(curlMultiHandle);
-
-  // Showing execution time
-  // auto end = std::chrono::steady_clock::now();
-  // printBar();
-  // std::cout << "Elapsed time in microseconds: "
-  //       << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
-  //       << " µs" << std::endl;
 
   // // Cleaning UV loop
   // std::cout << "\nIs loop alive? " << uv_loop_alive(loop) << "\n";
@@ -436,76 +317,79 @@ int AsynchronousDownloader::oldMain()
   // std::cout << "Is loop alive? " << uv_loop_alive(loop) << "\n";
   // std::cout << "Loop closed properly? " << (uv_loop_close(loop) != UV_EBUSY)  << "\n";
   // free(loop);
-
-  return 0;
 }
 
-int AsynchronousDownloader::addDownloadTask(std::vector<std::string> urlVector)
+void AsynchronousDownloader::blockingPerform(CURL* handle)
 {
-  auto urlContentMap = urlVectorToUrlContentMap(urlVector);
-  // mutex?
-  urlContentMapQueue.push_back(urlContentMap);
-  queueStatus.push_back(0);
-  queueProgress.push_back(0);
-  // end mutex?
+  std::condition_variable cv;
+  std::mutex cv_m;
+  std::unique_lock<std::mutex> lk(cv_m);
 
-  // 0 - queued
-  // 1 - started
-  // 2 - finished
+  AsynchronousDownloader::PerformData data;
+  data.asynchronous = false;
+  data.cv = &cv;
 
-  // returns index in urlContentMapQueue
-  return queueStatus.size() - 1;
+  curl_easy_setopt(handle, CURLOPT_PRIVATE, &data);
+  curl_multi_add_handle(curlMultiHandle, handle);
+
+  cv.wait(lk);
 }
 
-std::unordered_map<std::string, std::string *> *AsynchronousDownloader::getResponse(int index)
+void AsynchronousDownloader::asynchPerform(CURL* handle, bool *completionFlag)
 {
-  return urlContentMapQueue[index];
+
+  auto data = new AsynchronousDownloader::PerformData();
+  data->asynchronous = true;
+  data->completionFlag = completionFlag;
+
+  curl_easy_setopt(handle, CURLOPT_PRIVATE, data);
+  curl_multi_add_handle(curlMultiHandle, handle);
 }
 
-std::string *AsynchronousDownloader::getResponse(int index, std::string url)
+size_t testCallback(void *contents, size_t size, size_t nmemb, std::string *dst)
 {
-  if (getResponse(index)->find(url) == getResponse(index)->end())
+  char *conts = (char *)contents;
+  for (int i = 0; i < nmemb; i++)
   {
-    std::cout << "Response to url: " << url << " NOT FOUND\n";
+    (*dst) += *(conts++);
   }
-  return (*getResponse(index))[url];
+  return size * nmemb;
 }
 
-bool twoBatches = true;
+CURL* prepareTestHandle(std::string* dst)
+{
+  CURL* handle = curl_easy_init();
+  curl_easy_setopt(handle, CURLOPT_URL, "http://alice-ccdb.cern.ch/latest/TPC/.*");
+  curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, testCallback);
+  curl_easy_setopt(handle, CURLOPT_WRITEDATA, dst);
+  return handle;
+}
 
 int main()
-{
-  AsynchronousDownloader *AS = new AsynchronousDownloader();
-  std::thread t1(&AsynchronousDownloader::oldMain, AS);
-
-  std::vector<std::string> urlVec;
-  urlVec.push_back("http://ccdb-test.cern.ch:8080/browse/TPC/.*");
-  urlVec.push_back("http://ccdb-test.cern.ch:8080/latest/TPC/.*");
-  int firstResponse = AS->addDownloadTask(urlVec);
-
-  if (twoBatches)
+{  
+  if (curl_global_init(CURL_GLOBAL_ALL))
   {
-    sleep(2);
-    std::cout << "Pushing second!\n";
-    std::vector<std::string> urlVec2;
-    urlVec2.push_back("http://alice-ccdb.cern.ch/browse/TPC/.*");
-    urlVec2.push_back("http://alice-ccdb.cern.ch/latest/TPC/.*");
-    int secondResponse = AS->addDownloadTask(urlVec2);
+    fprintf(stderr, "Could not init curl\n");
+    return 1;
   }
+  std::string dst;
+  CURL* testHandle = prepareTestHandle(&dst);
 
-  while (AS->queueProgress[0] != 2 || AS->queueProgress[1] != 2)
-  {
-    sleep(1);
-  }
+  AsynchronousDownloader *AD = new AsynchronousDownloader();
+  AD->init();
+  std::thread t1(&AsynchronousDownloader::asynchLoop, AD);
 
-  std::cout << "Signalled to close loop\n";
-  AS->closeLoop = true;
+  std::cout << "About to blocking perform\n";
+  AD->blockingPerform(testHandle);
+
+  bool completionFlag = false;
+  AD->asynchPerform(testHandle, &completionFlag);
+
+  while (!completionFlag) sleep(1);
+
+  std::cout << "Signalling end\n";
+  AD->closeLoop = true;
   t1.join();
-  std::cout << "All worked well!\n";
-
-  // AS->printContents(AS->getResponse(0));
-  // AS->printContents(AS->getResponse(1));
-  // std::cout << "Response:\n" << *getResponse(0, "http://ccdb-test.cern.ch:8080/latest/TPC/.*");
-
+  // std::cout << "Final: " << dst.substr(0, 1000) << "\n";
   return 0;
 }
