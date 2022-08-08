@@ -22,7 +22,7 @@ void checkDownloadTasks(uv_timer_t *handle);
 void timerCallback(uv_timer_t *handle);
 void on_timeout(uv_timer_t *req);
 void curl_perform(uv_poll_t *req, int status, int events);
-void checkForClosing(uv_timer_t *handle);
+void checkGlobals(uv_timer_t *handle);
 
 class AsynchronousDownloader
 {
@@ -34,6 +34,8 @@ public:
   uv_loop_t *loop = nullptr;
   CURLM *curlMultiHandle = nullptr;
   uv_timer_t *timeout;
+
+  std::vector< std::pair<std::thread*, bool*> > threadFlagPairVector;
 
   typedef struct curl_context_s
   {
@@ -70,6 +72,10 @@ public:
     std::condition_variable *cv;
     bool *completionFlag;
     CURLcode *codeDestination;
+    void (*cbFun)(void*);
+    std::thread *cbThread;
+    void *cbData;
+    bool callback = false;
   } PerformData;
 
   static curl_context_t *createCurlContext(curl_socket_t sockfd, AsynchronousDownloader *objPtr);
@@ -77,7 +83,6 @@ public:
   static void destroyCurlContext(curl_context_t *context);
   static int createCurlHandleIndex(std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap);
   static CurlHandleData *createCurlHandleData(CURL *handle, int queueIndex, std::unordered_map<int, AsynchronousDownloader::CurlHandleData *> *handleDataMap, uv_loop_t *loop);
-  static size_t curlCallback(void *contents, size_t size, size_t nmemb, std::string *dst);
   void checkMultiInfo(void);
   static int startTimeout(CURLM *multi, long timeout_ms, void *userp);
   static int handleSocket(CURL *easy, curl_socket_t s, int action, void *userp, void *socketp);
@@ -89,7 +94,9 @@ public:
   std::string *getResponse(int index, std::string url);
   bool init();
   CURLcode *blockingPerform(CURL* handle);
+  CURLcode *blockingPerformWithCallback(CURL* handle, void (*cbFun)(void*), void* cbData);
   CURLcode *asynchPerform(CURL* handle, bool *completionFlag);
+  CURLcode *asynchPerformWithCallback(CURL* handle, bool *completionFlag, void (*cbFun)(void*), void* cbData);
 };
 
 #endif
