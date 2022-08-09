@@ -14,7 +14,7 @@
 #include <unistd.h> // time measurement
 
 #include "AsynchronousDownloader.h"
-#include "benchmark.h"
+#include "resources.h"
 
 /*
 g++ -std=c++11 AsynchronousDownloader.cpp -lpthread -lcurl -luv -o main && ./main
@@ -230,6 +230,7 @@ void checkGlobals(uv_timer_t *handle)
   // std::cout << "checkGlobals\n";
   auto AD = (AsynchronousDownloader*)handle->data;
   if(AD->closeLoop) {
+    std::cout << "Signal to close loop received\n";
     uv_timer_stop(handle);
   }
 
@@ -392,18 +393,6 @@ void testCallback(void* data)
 
 void regularTest()
 {
-  // std::cout << "regularTest\n";
-
-  // CURL* handle = curl_easy_init();  
-  // std::string dst;
-  // curl_easy_setopt(handle, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/GLO/GRP/0/3f9e2220-1c67-11ec-8ca3-200114580202");
-  // curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString2);
-  // curl_easy_setopt(handle, CURLOPT_WRITEDATA, &dst);
-  // curl_easy_perform(handle);
-  // curl_easy_cleanup(handle);
-  // std::cout << "\nDESTINATION\n" << dst << "\nYUP\n";
-
-
   std::string dst1;
   std::string dst2;
   CURL* testHandle1 = prepareTestHandle(&dst1);
@@ -436,10 +425,40 @@ void regularTest()
   // std::cout << "Asynch:\n" << dst2.substr(0, 1000) << "\n";
 }
 
+std::vector<std::string> createPathsFromCS()
+{
+  std::vector<std::string> vec;
+  std::string temp = "";
+  for(int i = 0; i < pathsCS.size(); i++)
+  {
+    if (pathsCS[i] == ',') {
+      vec.push_back(temp);
+      temp = "";
+    }
+    else {
+      (temp.push_back(pathsCS[i]));
+    }
+  }
+  return vec;
+}
+
+int countDataReceived(std::vector<bool*> flags)
+{
+  int counter = 0;
+  for(int i = 0; i < flags.size(); i++)
+  {
+    if (*flags[i]) {
+      counter++;
+    }
+  }
+  return counter;
+}
+
 void benchmarkTest()
 {
   // std::cout << "benchmarkTest\n";
-  auto paths = createPaths();
+  // auto paths = createPaths();
+  auto paths = createPathsFromCS();
   std::vector<std::string*> results;
   std::vector<CURL*> handles;
   std::vector<bool*> flags;
@@ -451,7 +470,7 @@ void benchmarkTest()
   auto start = std::chrono::system_clock::now();
 
   // paths.size()
-  for(int i = 0; i < 50; i++) {
+  for(int i = 0; i < 3; i++) { // smallest number with infinite wait to finish downloading = 3
     handles.push_back(new CURL*);
     handles[i] = curl_easy_init();
     auto handle = handles[i];
@@ -461,19 +480,19 @@ void benchmarkTest()
 
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, results[i]);
-    curl_easy_setopt(handle, CURLOPT_URL, paths[i]->c_str());
+    curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
 
     AD.asynchPerform(handle, flags[i]);
   }
 
-  std::cout << "For exited\n";
-  int counter = 0;
+  std::cout << "Order placed, waiting for results\n";
+  int oldCounter = countDataReceived(flags);
+  int counter = countDataReceived(flags);
   while(counter < flags.size()) {
-    if (*flags[counter]) {
-      counter++;
-      std::cout << "Counter: " << counter-1 << "\n";
-    }
-    else sleep(0.05);
+    counter = countDataReceived(flags);
+    if (oldCounter != counter) std::cout << flags.size() - countDataReceived(flags) << " files left\n";
+    oldCounter = counter;
+    sleep(0.05);
   }
 
   auto end = std::chrono::system_clock::now();
@@ -481,8 +500,8 @@ void benchmarkTest()
   std::cout << "Measured time is: " << difference << ".\n";
   AD.closeLoop = true;
   t.join();
-
-  for(int i = 0; i < flags.size(); i++) {
+  std::cout << "Thread joined\n";
+  for(int i = 0; i < handles.size(); i++) {
     curl_easy_cleanup(handles[i]);
   }
 }
@@ -495,7 +514,10 @@ int main()
     return 1;
   }
 
-  benchmarkTest();
+  for(int i = 1; i <= 30; i++) {
+    std::cout << "Test number: " << i << "\n";
+    benchmarkTest();
+  }
 
   // CURL* handle = curl_easy_init();
   // std::string res;
