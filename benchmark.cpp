@@ -44,19 +44,19 @@ size_t countObjects(rapidjson::Document *doc)
   return objectsArray.Size();
 }
 
-std::vector<std::string> createPathsFromMetadata(std::string metadata, std::string baseUrl)
+std::vector<std::string*> createPathsFromMetadata(std::string metadata, std::string baseUrl)
 {
   rapidjson::Document doc;
   doc.Parse(metadata.c_str());
   size_t len = countObjects(&doc);
-  std::vector<std::string> paths;
+  std::vector<std::string*> paths;
   for(int i = 0; i < len; i++) {
-    paths.push_back(baseUrl + "/" + getStringAttribute(i, "path", &doc) + "/" + getLongAttribute(i, "validFrom", &doc) + "/" + getStringAttribute(i, "id", &doc));
+    paths.push_back(new std::string(baseUrl + "/" + getStringAttribute(i, "path", &doc) + "/" + getLongAttribute(i, "validFrom", &doc) + "/" + getStringAttribute(i, "id", &doc)));
   }
   return paths;
 }
 
-std::vector<std::string> createPaths()
+std::vector<std::string*> createPaths()
 {
   CURL* handle = curl_easy_init();  
   std::string dst;

@@ -40,6 +40,7 @@ Information:
 
 void onTimeout(uv_timer_t *req)
 {
+  // std::cout << "onTimeout\n";
   auto AD = (AsynchronousDownloader *)req->data;
   int running_handles;
   curl_multi_socket_action(AD->curlMultiHandle, CURL_SOCKET_TIMEOUT, 0,
@@ -52,6 +53,7 @@ void onTimeout(uv_timer_t *req)
 // If call is finished closes handle indirectly by check multi info
 void curl_perform(uv_poll_t *req, int status, int events)
 {
+  // std::cout << "curl_perform\n";
   int running_handles;
   int flags = 0;
   if (events & UV_READABLE)
@@ -69,6 +71,7 @@ void curl_perform(uv_poll_t *req, int status, int events)
 // Initializes a handle using a socket and passes it to context
 AsynchronousDownloader::curl_context_t *AsynchronousDownloader::createCurlContext(curl_socket_t sockfd, AsynchronousDownloader *objPtr)
 {
+  // std::cout << "createCurlContext\n";
   curl_context_t *context;
 
   context = (curl_context_t *)malloc(sizeof(*context));
@@ -84,6 +87,7 @@ AsynchronousDownloader::curl_context_t *AsynchronousDownloader::createCurlContex
 // Frees data from curl handle inside uv_handle*
 void AsynchronousDownloader::curlCloseCB(uv_handle_t *handle)
 {
+  // std::cout << "curlCloseCB\n";
   curl_context_t *context = (curl_context_t *)handle->data;
   free(context);
 }
@@ -91,11 +95,13 @@ void AsynchronousDownloader::curlCloseCB(uv_handle_t *handle)
 // Makes an asynchronious call to free curl context*
 void AsynchronousDownloader::destroyCurlContext(curl_context_t *context)
 {
+  // std::cout << "destroyCurlContext\n";
   uv_close((uv_handle_t *)&context->poll_handle, curlCloseCB);
 }
 
 void callbackWrappingFunction(void (*cbFun)(void*), void* data, bool* completionFlag)
 {
+  // std::cout << "callbackWrappingFunction\n";
   cbFun(data);
   *completionFlag = true;
 }
@@ -103,6 +109,7 @@ void callbackWrappingFunction(void (*cbFun)(void*), void* data, bool* completion
 // Removes used easy handles from multihandle
 void AsynchronousDownloader::checkMultiInfo(void)
 {
+  // std::cout << "checkMultiInfo\n";
   char *done_url;
   CURLMsg *message;
   int pending;
@@ -122,7 +129,7 @@ void AsynchronousDownloader::checkMultiInfo(void)
       easy_handle = message->easy_handle;
 
       curl_easy_getinfo(easy_handle, CURLINFO_EFFECTIVE_URL, &done_url);
-      printf("%s DONE\n", done_url);
+      // printf("%s DONE\n", done_url);
 
       PerformData *data;
       curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &data); 
@@ -161,6 +168,7 @@ void AsynchronousDownloader::checkMultiInfo(void)
 // Connects curl timer with uv timer
 int AsynchronousDownloader::startTimeout(CURLM *multi, long timeout_ms, void *userp)
 {
+  // std::cout << "startTimeout\n";
   auto timeout = (uv_timer_t *)userp;
 
   if (timeout_ms < 0)
@@ -182,6 +190,7 @@ int AsynchronousDownloader::startTimeout(CURLM *multi, long timeout_ms, void *us
 int AsynchronousDownloader::handleSocket(CURL *easy, curl_socket_t s, int action, void *userp,
                                          void *socketp)
 {
+  // std::cout << "handleSocket\n";
   auto socketData = (DataForSocket *)userp;
   curl_context_t *curl_context;
   int events = 0;
@@ -218,6 +227,7 @@ int AsynchronousDownloader::handleSocket(CURL *easy, curl_socket_t s, int action
 
 void checkGlobals(uv_timer_t *handle)
 {
+  // std::cout << "checkGlobals\n";
   auto AD = (AsynchronousDownloader*)handle->data;
   if(AD->closeLoop) {
     uv_timer_stop(handle);
@@ -237,6 +247,7 @@ void checkGlobals(uv_timer_t *handle)
 
 bool AsynchronousDownloader::init()
 {
+  // std::cout << "init\n";
   // Preparing loop timer
   timeout = new uv_timer_t();
   timeout->data = this;
@@ -261,8 +272,10 @@ bool AsynchronousDownloader::init()
 
   return true;
 }
+
 void AsynchronousDownloader::asynchLoop()
 {
+  // std::cout << "asynchLoop\n";
   std::cout << "Loop starting\n";
   uv_run(loop, UV_RUN_DEFAULT);
   std::cout << "Loop finished\n";
@@ -279,6 +292,7 @@ void AsynchronousDownloader::asynchLoop()
 
 CURLcode *AsynchronousDownloader::blockingPerform(CURL* handle)
 {
+  // std::cout << "blockingPerform\n";
   std::condition_variable cv;
   std::mutex cv_m;
   std::unique_lock<std::mutex> lk(cv_m);
@@ -298,6 +312,7 @@ CURLcode *AsynchronousDownloader::blockingPerform(CURL* handle)
 
 CURLcode *AsynchronousDownloader::blockingPerformWithCallback(CURL* handle, void (*cbFun)(void*), void* cbData)
 {
+  // std::cout << "blockingPerformWithCallback\n";
   std::condition_variable cv;
   std::mutex cv_m;
   std::unique_lock<std::mutex> lk(cv_m);
@@ -318,6 +333,7 @@ CURLcode *AsynchronousDownloader::blockingPerformWithCallback(CURL* handle, void
 
 CURLcode *AsynchronousDownloader::asynchPerform(CURL* handle, bool *completionFlag)
 {
+  // std::cout << "asynchPerform\n";
   auto data = new AsynchronousDownloader::PerformData();
   auto code = new CURLcode();
   data->asynchronous = true;
@@ -331,7 +347,7 @@ CURLcode *AsynchronousDownloader::asynchPerform(CURL* handle, bool *completionFl
 
 CURLcode *AsynchronousDownloader::asynchPerformWithCallback(CURL* handle, bool *completionFlag, void (*cbFun)(void*), void* cbData)
 {
-
+  // std::cout << "asynchPerformWithCallback\n";
   auto data = new AsynchronousDownloader::PerformData();
   auto code = new CURLcode();
   data->asynchronous = true;
@@ -349,6 +365,7 @@ CURLcode *AsynchronousDownloader::asynchPerformWithCallback(CURL* handle, bool *
 
 size_t writeToString(void *contents, size_t size, size_t nmemb, std::string *dst)
 {
+  // std::cout << "writeToString\n";
   char *conts = (char *)contents;
   for (int i = 0; i < nmemb; i++)
   {
@@ -359,6 +376,7 @@ size_t writeToString(void *contents, size_t size, size_t nmemb, std::string *dst
 
 CURL* prepareTestHandle(std::string* dst)
 {
+  // std::cout << "prepareTestHandle\n";
   CURL* handle = curl_easy_init();
   curl_easy_setopt(handle, CURLOPT_URL, "http://alice-ccdb.cern.ch/latest/TPC/.*");
   curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
@@ -368,16 +386,24 @@ CURL* prepareTestHandle(std::string* dst)
 
 void testCallback(void* data)
 {
+  // std::cout << "testCallback\n";
   std::cout << "Callback works, data: " << *((std::string*)data) << "\n";
 }
 
-int main()
+void regularTest()
 {
-  if (curl_global_init(CURL_GLOBAL_ALL))
-  {
-    fprintf(stderr, "Could not init curl\n");
-    return 1;
-  }
+  // std::cout << "regularTest\n";
+
+  // CURL* handle = curl_easy_init();  
+  // std::string dst;
+  // curl_easy_setopt(handle, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/GLO/GRP/0/3f9e2220-1c67-11ec-8ca3-200114580202");
+  // curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString2);
+  // curl_easy_setopt(handle, CURLOPT_WRITEDATA, &dst);
+  // curl_easy_perform(handle);
+  // curl_easy_cleanup(handle);
+  // std::cout << "\nDESTINATION\n" << dst << "\nYUP\n";
+
+
   std::string dst1;
   std::string dst2;
   CURL* testHandle1 = prepareTestHandle(&dst1);
@@ -404,9 +430,92 @@ int main()
   std::cout << "Signalling end\n";
   AD->closeLoop = true;
   t1.join();
+
   // std::cout << "\nBlocking:\n" << dst1.substr(0, 1000) << "\n";
   // std::cout << "--------------------------------------------------\n";
   // std::cout << "Asynch:\n" << dst2.substr(0, 1000) << "\n";
+}
+
+void benchmarkTest()
+{
+  // std::cout << "benchmarkTest\n";
+  auto paths = createPaths();
+  std::vector<std::string*> results;
+  std::vector<CURL*> handles;
+  std::vector<bool*> flags;
+
+  AsynchronousDownloader AD;
+  AD.init();
+  std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
+
+  auto start = std::chrono::system_clock::now();
+
+  // paths.size()
+  for(int i = 0; i < 50; i++) {
+    handles.push_back(new CURL*);
+    handles[i] = curl_easy_init();
+    auto handle = handles[i];
+
+    flags.push_back(new bool(false));
+    results.push_back(new std::string());
+
+    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results[i]);
+    curl_easy_setopt(handle, CURLOPT_URL, paths[i]->c_str());
+
+    AD.asynchPerform(handle, flags[i]);
+  }
+
+  std::cout << "For exited\n";
+  int counter = 0;
+  while(counter < flags.size()) {
+    if (*flags[counter]) {
+      counter++;
+      std::cout << "Counter: " << counter-1 << "\n";
+    }
+    else sleep(0.05);
+  }
+
+  auto end = std::chrono::system_clock::now();
+  auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  std::cout << "Measured time is: " << difference << ".\n";
+  AD.closeLoop = true;
+  t.join();
+
+  for(int i = 0; i < flags.size(); i++) {
+    curl_easy_cleanup(handles[i]);
+  }
+}
+
+int main()
+{
+  if (curl_global_init(CURL_GLOBAL_ALL))
+  {
+    fprintf(stderr, "Could not init curl\n");
+    return 1;
+  }
+
+  benchmarkTest();
+
+  // CURL* handle = curl_easy_init();
+  // std::string res;
+  // bool *f = new bool(false);
+  // curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
+  // curl_easy_setopt(handle, CURLOPT_WRITEDATA, &res);
+  // curl_easy_setopt(handle, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/TPC/Calib/CorrectionMaps/1613573276947/4fe98e00-712f-11eb-82cf-0aa1402f250c");
+  // // curl_easy_setopt(handle, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/latest/TPC/.*");
+  // AsynchronousDownloader AD;
+  // AD.init();
+  // std::thread t1(&AsynchronousDownloader::asynchLoop, &AD);
+  // std::cout << "Ordering download\n";
+  // AD.asynchPerform(handle, f);
+  // std::cout << "Order placed\n";
+
+  // while (!(*f)) sleep(0.1);
+  // std::cout << "RES:\n" << res << "\n";
+  // AD.closeLoop = true;
+  // t1.join();
+
   curl_global_cleanup();
   return 0;
 }
