@@ -14,9 +14,11 @@
 #include <unistd.h> // time measurement
 
 #include "AsynchronousDownloader.h"
+#include "benchmark.h"
 
 /*
 g++ -std=c++11 AsynchronousDownloader.cpp -lpthread -lcurl -luv -o main && ./main
+g++ -std=c++11 AsynchronousDownloader.cpp benchmark.cpp -lpthread -lcurl -luv -o main && ./main
 */
 
 /*
@@ -316,7 +318,6 @@ CURLcode *AsynchronousDownloader::blockingPerformWithCallback(CURL* handle, void
 
 CURLcode *AsynchronousDownloader::asynchPerform(CURL* handle, bool *completionFlag)
 {
-
   auto data = new AsynchronousDownloader::PerformData();
   auto code = new CURLcode();
   data->asynchronous = true;
@@ -371,7 +372,7 @@ void testCallback(void* data)
 }
 
 int main()
-{  
+{
   if (curl_global_init(CURL_GLOBAL_ALL))
   {
     fprintf(stderr, "Could not init curl\n");
@@ -406,5 +407,6 @@ int main()
   // std::cout << "\nBlocking:\n" << dst1.substr(0, 1000) << "\n";
   // std::cout << "--------------------------------------------------\n";
   // std::cout << "Asynch:\n" << dst2.substr(0, 1000) << "\n";
+  curl_global_cleanup();
   return 0;
 }
