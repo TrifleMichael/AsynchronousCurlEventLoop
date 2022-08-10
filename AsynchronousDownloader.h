@@ -9,6 +9,7 @@
 #include <string.h>   //strcpy
 #include <thread>     // get_id
 #include <vector>
+#include <mutex>
 
 #include <chrono>   // time measurement
 #include <unistd.h> // time measurement
@@ -32,6 +33,9 @@ public:
   uv_loop_t *loop = nullptr;
   CURLM *curlMultiHandle = nullptr;
   uv_timer_t *timeout;
+  std::vector<CURL*> handlesToBeAdded;
+  std::mutex handlesQueueLock;
+  
 
   std::vector< std::pair<std::thread*, bool*> > threadFlagPairVector;
 

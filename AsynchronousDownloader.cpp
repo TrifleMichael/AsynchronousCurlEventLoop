@@ -9,11 +9,13 @@
 #include <thread>     // get_id
 #include <vector>
 #include <condition_variable>
+#include <mutex>
 
 #include <chrono>   // time measurement
 #include <unistd.h> // time measurement
 
 #include "AsynchronousDownloader.h"
+#include "benchmark.h"
 #include "resources.h"
 
 /*
@@ -26,6 +28,9 @@ TODO:
 
 - change name "checkGlobals"
 - pooling threads only when they exist
+- pooling handles to add only when they exist
+- adding locks to all operations
+
 - reusing socket errors can happen - handle by trying new socket, and pass error as last resort
 - multiple uv loop threads
 
@@ -37,6 +42,11 @@ Information:
 
 */
 
+int perform = 0;
+int checkMultiInfoI = 0;
+int handleSocketI = 0;
+
+int doneFiles = 0;
 
 void onTimeout(uv_timer_t *req)
 {
@@ -54,6 +64,12 @@ void onTimeout(uv_timer_t *req)
 void curl_perform(uv_poll_t *req, int status, int events)
 {
   // std::cout << "curl_perform\n";
+
+  // if (++perform == 1000) {
+  //   std::cout << "curl_perform\n";
+  //   perform = 0;
+  // }
+
   int running_handles;
   int flags = 0;
   if (events & UV_READABLE)
@@ -110,6 +126,11 @@ void callbackWrappingFunction(void (*cbFun)(void*), void* data, bool* completion
 void AsynchronousDownloader::checkMultiInfo(void)
 {
   // std::cout << "checkMultiInfo\n";
+
+  // if (++checkMultiInfoI == 1000) {
+  //   std::cout << "checkMultiInfo\n";
+  //   checkMultiInfoI = 0;
+  // }
   char *done_url;
   CURLMsg *message;
   int pending;
@@ -127,7 +148,6 @@ void AsynchronousDownloader::checkMultiInfo(void)
         calling curl_multi_cleanup, curl_multi_remove_handle or
         curl_easy_cleanup." */
       easy_handle = message->easy_handle;
-
       curl_easy_getinfo(easy_handle, CURLINFO_EFFECTIVE_URL, &done_url);
       // printf("%s DONE\n", done_url);
 
@@ -191,6 +211,10 @@ int AsynchronousDownloader::handleSocket(CURL *easy, curl_socket_t s, int action
                                          void *socketp)
 {
   // std::cout << "handleSocket\n";
+  // if (++handleSocketI == 1000) {
+  //   std::cout << "handleSocket\n";
+  //   handleSocketI = 0;
+  // }
   auto socketData = (DataForSocket *)userp;
   curl_context_t *curl_context;
   int events = 0;
@@ -234,6 +258,15 @@ void checkGlobals(uv_timer_t *handle)
     uv_timer_stop(handle);
   }
 
+  AD->handlesQueueLock.lock();
+  for(auto handle : AD->handlesToBeAdded) {
+    curl_multi_add_handle(AD->curlMultiHandle, handle);
+  }
+  AD->handlesToBeAdded.clear();
+  AD->handlesQueueLock.unlock();
+
+  // std::cout << "Active handles: " << AD->loop->active_handles << "\n";
+
   // Join and erase threads that finished running callback functions
   for(int i = 0; i < AD->threadFlagPairVector.size(); i++) {
     if (*(AD->threadFlagPairVector[i].second)) {
@@ -269,7 +302,7 @@ bool AsynchronousDownloader::init()
   auto timerCheckQueueHandle = new uv_timer_t();
   timerCheckQueueHandle->data = this;
   uv_timer_init(loop, timerCheckQueueHandle);
-  uv_timer_start(timerCheckQueueHandle, checkGlobals, 200, 200);
+  uv_timer_start(timerCheckQueueHandle, checkGlobals, 1000, 1000);
 
   return true;
 }
@@ -342,7 +375,12 @@ CURLcode *AsynchronousDownloader::asynchPerform(CURL* handle, bool *completionFl
   data->codeDestination = code;
 
   curl_easy_setopt(handle, CURLOPT_PRIVATE, data);
-  curl_multi_add_handle(curlMultiHandle, handle);
+
+  handlesQueueLock.lock();
+  handlesToBeAdded.push_back(handle);
+  // curl_multi_add_handle(curlMultiHandle, handle);
+  handlesQueueLock.unlock();
+
   return code;
 }
 
@@ -466,11 +504,10 @@ void benchmarkTest()
   AsynchronousDownloader AD;
   AD.init();
   std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
-
   auto start = std::chrono::system_clock::now();
 
   // paths.size()
-  for(int i = 0; i < 3; i++) { // smallest number with infinite wait to finish downloading = 3
+  for(int i = 0; i < paths.size(); i++) { // smallest number with infinite wait to finish downloading = 3
     handles.push_back(new CURL*);
     handles[i] = curl_easy_init();
     auto handle = handles[i];
@@ -490,7 +527,9 @@ void benchmarkTest()
   int counter = countDataReceived(flags);
   while(counter < flags.size()) {
     counter = countDataReceived(flags);
-    if (oldCounter != counter) std::cout << flags.size() - countDataReceived(flags) << " files left\n";
+    if (oldCounter != counter) {
+      std::cout << flags.size() - counter << " files left\n";
+    }
     oldCounter = counter;
     sleep(0.05);
   }
@@ -506,6 +545,30 @@ void benchmarkTest()
   }
 }
 
+void linearTest()
+{
+  auto paths = createPathsFromCS();
+  std::vector<std::string*> results;
+
+  CURL *handle = curl_easy_init();
+  curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
+  auto start = std::chrono::system_clock::now();
+
+  for (int i = 0; i < paths.size(); i++)
+  {
+    results.push_back(new std::string());
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results[i]);
+    curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
+    curl_easy_perform(handle);
+    std::cout << "File number: " << i << " downloaded\n";
+  }
+  curl_easy_cleanup(handle);
+  auto end = std::chrono::system_clock::now();
+  auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  std::cout << "Measured time is: " << difference << ".\n";
+
+}
+
 int main()
 {
   if (curl_global_init(CURL_GLOBAL_ALL))
@@ -514,9 +577,20 @@ int main()
     return 1;
   }
 
+  // auto paths = createPaths();
+  // std::cout << "Done\n\n\n\n";
+  // for(auto path : paths) {
+  //   std::cout << *path;
+  // }
+  // std::cout << "\n\n\n\nDone\n";
+
+
+  // linearTest();
+
   for(int i = 1; i <= 30; i++) {
     std::cout << "Test number: " << i << "\n";
-    benchmarkTest();
+    // benchmarkTest();
+    linearTest();
   }
 
   // CURL* handle = curl_easy_init();

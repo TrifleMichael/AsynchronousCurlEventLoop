@@ -23,6 +23,11 @@ size_t writeToString2(void *contents, size_t size, size_t nmemb, std::string *ds
   return size * nmemb;
 }
 
+bool containsAttribute(int ind, std::string attributeName, rapidjson::Document *doc)
+{
+  return ((*doc)["objects"][ind].FindMember(attributeName.c_str()) != (*doc)["objects"][ind].MemberEnd());
+}
+
 std::string getStringAttribute(int ind, std::string attributeName, rapidjson::Document *doc)
 {
   
@@ -51,7 +56,8 @@ std::vector<std::string*> createPathsFromMetadata(std::string metadata, std::str
   size_t len = countObjects(&doc);
   std::vector<std::string*> paths;
   for(int i = 0; i < len; i++) {
-    paths.push_back(new std::string(baseUrl + "/" + getStringAttribute(i, "path", &doc) + "/" + getLongAttribute(i, "validFrom", &doc) + "/" + getStringAttribute(i, "id", &doc)));
+    if (containsAttribute(i, "ObjectType", &doc))
+      paths.push_back(new std::string(getStringAttribute(i, "path", &doc) + "~" + getLongAttribute(i, "validFrom", &doc) + "!" + getStringAttribute(i, "ObjectType", &doc) + "@"));
   }
   return paths;
 }
@@ -63,7 +69,9 @@ std::vector<std::string*> createPaths()
   curl_easy_setopt(handle, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/latest/%5Cw%7B3%7D/.*/1659949694000?Accept=application/json");
   curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString2);
   curl_easy_setopt(handle, CURLOPT_WRITEDATA, &dst);
+  std::cout << "about to perform\n";
   curl_easy_perform(handle);
+  std::cout << "performing\n";
   curl_easy_cleanup(handle);
 
   return createPathsFromMetadata(dst, "http://ccdb-test.cern.ch:8080");
