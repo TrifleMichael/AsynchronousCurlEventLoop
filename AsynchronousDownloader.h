@@ -27,7 +27,9 @@ class AsynchronousDownloader
 {
 public:
   uint64_t curlBuffer = 800; // miliseconds durning which handle will be left open after last call
-  int loopIterations = 5000;
+  int handlesInUse = 0;
+  int maxHandlesInUse = 80;
+
 
   bool closeLoop = false;
   uv_loop_t *loop = nullptr;

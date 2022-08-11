@@ -122,6 +122,7 @@ void callbackWrappingFunction(void (*cbFun)(void*), void* data, bool* completion
   *completionFlag = true;
 }
 
+int done = 0;
 // Removes used easy handles from multihandle
 void AsynchronousDownloader::checkMultiInfo(void)
 {
@@ -147,6 +148,8 @@ void AsynchronousDownloader::checkMultiInfo(void)
         "WARNING: The data the returned pointer points to will not survive
         calling curl_multi_cleanup, curl_multi_remove_handle or
         curl_easy_cleanup." */
+      
+      handlesInUse--;
       easy_handle = message->easy_handle;
       curl_easy_getinfo(easy_handle, CURLINFO_EFFECTIVE_URL, &done_url);
       // printf("%s DONE\n", done_url);
@@ -203,7 +206,7 @@ void AsynchronousDownloader::checkMultiInfo(void)
           }
         }
       }
-      
+      // std::cout << "DONE: " << ++done << "\n";
       // curl_easy_cleanup(easy_handle);
     }
     break;
@@ -289,10 +292,11 @@ void checkGlobals(uv_timer_t *handle)
   }
 
   AD->handlesQueueLock.lock();
-  for(auto handle : AD->handlesToBeAdded) {
-    curl_multi_add_handle(AD->curlMultiHandle, handle);
+  while(AD->handlesToBeAdded.size() > 0 && AD->handlesInUse < AD->maxHandlesInUse) {
+    curl_multi_add_handle(AD->curlMultiHandle, AD->handlesToBeAdded.front());
+    AD->handlesInUse++;
+    AD->handlesToBeAdded.erase(AD->handlesToBeAdded.begin());
   }
-  AD->handlesToBeAdded.clear();
   AD->handlesQueueLock.unlock();
 
   // std::cout << "Active handles: " << AD->loop->active_handles << "\n";
@@ -638,7 +642,7 @@ void benchmarkTest()
   auto start = std::chrono::system_clock::now();
 
   // paths.size()
-  for(int i = 0; i < paths.size(); i++) { // smallest number with infinite wait to finish downloading = 3
+  for(int i = 0; i < paths.size(); i++) {
     handles.push_back(new CURL*);
     handles[i] = curl_easy_init();
     auto handle = handles[i];
