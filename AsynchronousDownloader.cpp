@@ -28,7 +28,6 @@ TODO:
 
 - change name "checkGlobals"
 - pooling threads only when they exist
-- pooling handles to add only when they exist
 - adding locks to all operations
 
 - reusing socket errors can happen - handle by trying new socket, and pass error as last resort
@@ -41,12 +40,6 @@ Information:
 - Curl multi handle automatically reuses connections. Source: https://everything.curl.dev/libcurl/connectionreuse
 
 */
-
-int perform = 0;
-int checkMultiInfoI = 0;
-int handleSocketI = 0;
-
-int doneFiles = 0;
 
 void onTimeout(uv_timer_t *req)
 {
@@ -64,11 +57,6 @@ void onTimeout(uv_timer_t *req)
 void curl_perform(uv_poll_t *req, int status, int events)
 {
   // std::cout << "curl_perform\n";
-
-  // if (++perform == 1000) {
-  //   std::cout << "curl_perform\n";
-  //   perform = 0;
-  // }
 
   int running_handles;
   int flags = 0;
@@ -122,16 +110,11 @@ void callbackWrappingFunction(void (*cbFun)(void*), void* data, bool* completion
   *completionFlag = true;
 }
 
-int done = 0;
 // Removes used easy handles from multihandle
 void AsynchronousDownloader::checkMultiInfo(void)
 {
   // std::cout << "checkMultiInfo\n";
 
-  // if (++checkMultiInfoI == 1000) {
-  //   std::cout << "checkMultiInfo\n";
-  //   checkMultiInfoI = 0;
-  // }
   char *done_url;
   CURLMsg *message;
   int pending;
@@ -197,17 +180,14 @@ void AsynchronousDownloader::checkMultiInfo(void)
         }
         // Batch request
         else {
-          // std::cout << "Requests left: " << *(data->requestsLeft) << "\n";
           *(data->requestsLeft) -= 1;
-          // std::cout << "Requests left: " << *(data->requestsLeft) << "\n";
           if (*data->requestsLeft == 0) {
             *data->completionFlag = true;
             free(data);
           }
         }
       }
-      // std::cout << "DONE: " << ++done << "\n";
-      // curl_easy_cleanup(easy_handle);
+      curl_easy_cleanup(easy_handle);
     }
     break;
 
@@ -244,10 +224,6 @@ int AsynchronousDownloader::handleSocket(CURL *easy, curl_socket_t s, int action
                                          void *socketp)
 {
   // std::cout << "handleSocket\n";
-  // if (++handleSocketI == 1000) {
-  //   std::cout << "handleSocket\n";
-  //   handleSocketI = 0;
-  // }
   auto socketData = (DataForSocket *)userp;
   curl_context_t *curl_context;
   int events = 0;
@@ -285,37 +261,44 @@ int AsynchronousDownloader::handleSocket(CURL *easy, curl_socket_t s, int action
 void checkGlobals(uv_timer_t *handle)
 {
   // std::cout << "checkGlobals\n";
+
+  // Check for closing signal
   auto AD = (AsynchronousDownloader*)handle->data;
   if(AD->closeLoop) {
     std::cout << "Signal to close loop received\n";
     uv_timer_stop(handle);
   }
 
-  AD->handlesQueueLock.lock();
-  while(AD->handlesToBeAdded.size() > 0 && AD->handlesInUse < AD->maxHandlesInUse) {
-    curl_multi_add_handle(AD->curlMultiHandle, AD->handlesToBeAdded.front());
-    AD->handlesInUse++;
-    AD->handlesToBeAdded.erase(AD->handlesToBeAdded.begin());
+  // Check if any handles in queue
+  if (AD->handlesToBeAdded.size() > 0)
+  {
+    AD->handlesQueueLock.lock();
+    // Add handles without going over the limit
+    while(AD->handlesToBeAdded.size() > 0 && AD->handlesInUse < AD->maxHandlesInUse) {
+      curl_multi_add_handle(AD->curlMultiHandle, AD->handlesToBeAdded.front());
+      AD->handlesInUse++;
+      AD->handlesToBeAdded.erase(AD->handlesToBeAdded.begin());
+    }
+    AD->handlesQueueLock.unlock();
   }
-  AD->handlesQueueLock.unlock();
-
-  // std::cout << "Active handles: " << AD->loop->active_handles << "\n";
 
   // Join and erase threads that finished running callback functions
-  for(int i = 0; i < AD->threadFlagPairVector.size(); i++) {
-    if (*(AD->threadFlagPairVector[i].second)) {
+  for (int i = 0; i < AD->threadFlagPairVector.size(); i++)
+  {
+    if (*(AD->threadFlagPairVector[i].second))
+    {
       AD->threadFlagPairVector[i].first->join();
-      delete(AD->threadFlagPairVector[i].first);
-      delete(AD->threadFlagPairVector[i].second);
-      AD->threadFlagPairVector.erase( AD->threadFlagPairVector.begin() + i );
+      delete (AD->threadFlagPairVector[i].first);
+      delete (AD->threadFlagPairVector[i].second);
+      AD->threadFlagPairVector.erase(AD->threadFlagPairVector.begin() + i);
     }
   }
 }
 
-
 bool AsynchronousDownloader::init()
 {
   // std::cout << "init\n";
+
   // Preparing loop timer
   timeout = new uv_timer_t();
   timeout->data = this;
@@ -423,7 +406,6 @@ CURLcode *AsynchronousDownloader::blockingPerform(CURL* handle)
 
   AsynchronousDownloader::PerformData data;
   auto code = new CURLcode();
-  // CURLcode code;
   data.codeDestination = code;
   data.asynchronous = false;
   data.cv = &cv;
@@ -447,7 +429,6 @@ CURLcode *AsynchronousDownloader::blockingPerformWithCallback(CURL* handle, void
 
   AsynchronousDownloader::PerformData data;
   auto code = new CURLcode();
-  // CURLcode code;
   data.codeDestination = code;
   data.asynchronous = false;
   data.cv = &cv;
