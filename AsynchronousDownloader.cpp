@@ -157,10 +157,8 @@ void AsynchronousDownloader::checkMultiInfo(void)
         if (data->batchRequest)
         {
           *data->requestsLeft -= 1;
-          std::cout << "Requests left: " << *data->requestsLeft << "\n";
           if (*data->requestsLeft == 0)
           {
-            std::cout << "Signalling end\n";
             data->cv->notify_all();
           }
         }
@@ -265,7 +263,6 @@ void checkGlobals(uv_timer_t *handle)
   // Check for closing signal
   auto AD = (AsynchronousDownloader*)handle->data;
   if(AD->closeLoop) {
-    std::cout << "Signal to close loop received\n";
     uv_timer_stop(handle);
   }
 
@@ -319,7 +316,7 @@ bool AsynchronousDownloader::init()
   auto timerCheckQueueHandle = new uv_timer_t();
   timerCheckQueueHandle->data = this;
   uv_timer_init(loop, timerCheckQueueHandle);
-  uv_timer_start(timerCheckQueueHandle, checkGlobals, 1000, 1000);
+  uv_timer_start(timerCheckQueueHandle, checkGlobals, 100, 100);
 
   return true;
 }
@@ -327,9 +324,7 @@ bool AsynchronousDownloader::init()
 void AsynchronousDownloader::asynchLoop()
 {
   // std::cout << "asynchLoop\n";
-  std::cout << "Loop starting\n";
   uv_run(loop, UV_RUN_DEFAULT);
-  std::cout << "Loop finished\n";
 
   curl_multi_cleanup(curlMultiHandle);
 
@@ -555,7 +550,7 @@ void blockingBatchTest()
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "Measured time is: " << difference << ".\n";
+  std::cout << "BLOCKING BATCH TEST - execution time: " << difference << "ms.\n";
   AD.closeLoop = true;
   t.join();
 }
@@ -590,7 +585,7 @@ void asynchBatchTest()
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "Measured time is: " << difference << ".\n";
+  std::cout << "ASYNCH BATCH TEST - execution time: " << difference << "ms.\n";
   AD.closeLoop = true;
   t.join();
 }
@@ -652,7 +647,7 @@ void benchmarkTest()
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "Measured time is: " << difference << ".\n";
+  std::cout << "Measured time is: " << difference << "ms.\n";
   AD.closeLoop = true;
   t.join();
   std::cout << "Thread joined\n";
@@ -676,13 +671,22 @@ void linearTest()
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, results[i]);
     curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
     curl_easy_perform(handle);
-    std::cout << "File number: " << i << " downloaded\n";
   }
   curl_easy_cleanup(handle);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "Measured time is: " << difference << ".\n";
+  std::cout << "LINEAR TEST - execution time: " << difference << "ms.\n";
 
+}
+
+void printUpdatedPaths()
+{
+  auto paths = createPaths();
+  std::cout << "Done\n\n\n\n";
+  for(auto path : paths) {
+    std::cout << *path;
+  }
+  std::cout << "\n\n\n\nDone\n";
 }
 
 int main()
@@ -693,43 +697,9 @@ int main()
     return 1;
   }
 
-  // auto paths = createPaths();
-  // std::cout << "Done\n\n\n\n";
-  // for(auto path : paths) {
-  //   std::cout << *path;
-  // }
-  // std::cout << "\n\n\n\nDone\n";
-
-
-  // linearTest();
-
-  // for(int i = 1; i <= 1; i++) {
-  //   std::cout << "Test number: " << i << "\n";
-  //   benchmarkTest();
-  //   // linearTest();
-  // }
-
-  // batchTest();
+  linearTest();
+  blockingBatchTest();
   asynchBatchTest();
-
-  // CURL* handle = curl_easy_init();
-  // std::string res;
-  // bool *f = new bool(false);
-  // curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
-  // curl_easy_setopt(handle, CURLOPT_WRITEDATA, &res);
-  // curl_easy_setopt(handle, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/TPC/Calib/CorrectionMaps/1613573276947/4fe98e00-712f-11eb-82cf-0aa1402f250c");
-  // // curl_easy_setopt(handle, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/latest/TPC/.*");
-  // AsynchronousDownloader AD;
-  // AD.init();
-  // std::thread t1(&AsynchronousDownloader::asynchLoop, &AD);
-  // std::cout << "Ordering download\n";
-  // AD.asynchPerform(handle, f);
-  // std::cout << "Order placed\n";
-
-  // while (!(*f)) sleep(0.1);
-  // std::cout << "RES:\n" << res << "\n";
-  // AD.closeLoop = true;
-  // t1.join();
 
   curl_global_cleanup();
   return 0;
