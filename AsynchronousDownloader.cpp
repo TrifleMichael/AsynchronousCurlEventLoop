@@ -324,6 +324,25 @@ void AsynchronousDownloader::asynchLoop()
   // free(loop);
 }
 
+// CURLcode *AsynchronousDownloader::batchBlockingPerform(std::vector<CURL*> handleVector)
+// {
+//   // std::cout << "blockingPerform\n";
+//   std::condition_variable cv;
+//   std::mutex cv_m;
+//   std::unique_lock<std::mutex> lk(cv_m);
+
+//   AsynchronousDownloader::PerformData data;
+//   auto code = new CURLcode();
+//   // CURLcode code;
+//   data.codeDestination = code;
+//   data.asynchronous = false;
+//   data.cv = &cv;
+//   curl_easy_setopt(handle, CURLOPT_PRIVATE, &data);
+//   curl_multi_add_handle(curlMultiHandle, handle);
+//   cv.wait(lk);
+//   return code;
+// }
+
 CURLcode *AsynchronousDownloader::blockingPerform(CURL* handle)
 {
   // std::cout << "blockingPerform\n";
@@ -339,7 +358,11 @@ CURLcode *AsynchronousDownloader::blockingPerform(CURL* handle)
   data.cv = &cv;
 
   curl_easy_setopt(handle, CURLOPT_PRIVATE, &data);
-  curl_multi_add_handle(curlMultiHandle, handle);
+
+  handlesQueueLock.lock();
+  handlesToBeAdded.push_back(handle);
+  handlesQueueLock.unlock();
+
   cv.wait(lk);
   return code;
 }
@@ -359,7 +382,11 @@ CURLcode *AsynchronousDownloader::blockingPerformWithCallback(CURL* handle, void
   data.cv = &cv;
   
   curl_easy_setopt(handle, CURLOPT_PRIVATE, &data);
-  curl_multi_add_handle(curlMultiHandle, handle);
+
+  handlesQueueLock.lock();
+  handlesToBeAdded.push_back(handle);
+  handlesQueueLock.unlock();
+
   cv.wait(lk);
   cbFun(cbData);
   return code;
@@ -378,7 +405,6 @@ CURLcode *AsynchronousDownloader::asynchPerform(CURL* handle, bool *completionFl
 
   handlesQueueLock.lock();
   handlesToBeAdded.push_back(handle);
-  // curl_multi_add_handle(curlMultiHandle, handle);
   handlesQueueLock.unlock();
 
   return code;
@@ -398,7 +424,11 @@ CURLcode *AsynchronousDownloader::asynchPerformWithCallback(CURL* handle, bool *
   data->callback = true;
 
   curl_easy_setopt(handle, CURLOPT_PRIVATE, data);
-  curl_multi_add_handle(curlMultiHandle, handle);
+
+  handlesQueueLock.lock();
+  handlesToBeAdded.push_back(handle);
+  handlesQueueLock.unlock();
+  
   return code;
 }
 
@@ -587,10 +617,10 @@ int main()
 
   // linearTest();
 
-  for(int i = 1; i <= 30; i++) {
+  for(int i = 1; i <= 1; i++) {
     std::cout << "Test number: " << i << "\n";
-    // benchmarkTest();
-    linearTest();
+    benchmarkTest();
+    // linearTest();
   }
 
   // CURL* handle = curl_easy_init();
