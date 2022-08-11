@@ -9,6 +9,7 @@
 #include <string.h>   //strcpy
 #include <thread>     // get_id
 #include <vector>
+#include <mutex>
 
 #include <chrono>   // time measurement
 #include <unistd.h> // time measurement
@@ -32,6 +33,9 @@ public:
   uv_loop_t *loop = nullptr;
   CURLM *curlMultiHandle = nullptr;
   uv_timer_t *timeout;
+  std::vector<CURL*> handlesToBeAdded;
+  std::mutex handlesQueueLock;
+  
 
   std::vector< std::pair<std::thread*, bool*> > threadFlagPairVector;
 
@@ -58,6 +62,8 @@ public:
     std::thread *cbThread;
     void *cbData;
     bool callback = false;
+    bool batchRequest = false;
+    size_t *requestsLeft;
   } PerformData;
 
   static curl_context_t *createCurlContext(curl_socket_t sockfd, AsynchronousDownloader *objPtr);
@@ -72,6 +78,8 @@ public:
   CURLcode *blockingPerformWithCallback(CURL* handle, void (*cbFun)(void*), void* cbData);
   CURLcode *asynchPerform(CURL* handle, bool *completionFlag);
   CURLcode *asynchPerformWithCallback(CURL* handle, bool *completionFlag, void (*cbFun)(void*), void* cbData);
+  std::vector<CURLcode*> batchBlockingPerform(std::vector<CURL*> handleVector);
+  std::vector<CURLcode*> batchAsynchPerform(std::vector<CURL*> handleVector, bool *completionFlag);
 };
 
 #endif
