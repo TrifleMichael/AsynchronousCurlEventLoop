@@ -186,6 +186,7 @@ void AsynchronousDownloader::checkMultiInfo(void)
         }
       }
       curl_easy_cleanup(easy_handle);
+      checkHandleQueue();
     }
     break;
 
@@ -282,7 +283,7 @@ void checkGlobals(uv_timer_t *handle)
   }
 
   // Check if any handles in queue
-  AD->checkHandleQueue();
+  // AD->checkHandleQueue();
 
   // Join and erase threads that finished running callback functions
   for (int i = 0; i < AD->threadFlagPairVector.size(); i++)
@@ -363,6 +364,7 @@ std::vector<CURLcode*> AsynchronousDownloader::batchAsynchPerform(std::vector<CU
     handlesToBeAdded.push_back(handleVector[i]); // protected before and after for
   }
   handlesQueueLock.unlock();
+  makeLoopCheckQueueAsync();
   return codeVector;
 }
 
@@ -392,7 +394,7 @@ std::vector<CURLcode*> AsynchronousDownloader::batchBlockingPerform(std::vector<
     handlesToBeAdded.push_back(handleVector[i]); // protected before and after for
   }
   handlesQueueLock.unlock();
-
+  makeLoopCheckQueueAsync();
   cv.wait(lk);
   return codeVector;
 }
@@ -530,7 +532,6 @@ std::vector<std::string> createPathsFromCS()
 
 void blockingBatchTest(int pathLimit = 0)
 {
-  std::cout << "Blocking test starts\n";
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
   
@@ -550,9 +551,7 @@ void blockingBatchTest(int pathLimit = 0)
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
     handles.push_back(handle);
   }
-  std::cout << "Blocking perform starts\n";
   AD.batchBlockingPerform(handles);
-  std::cout << "Blocking perform ended\n";
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -563,7 +562,6 @@ void blockingBatchTest(int pathLimit = 0)
 
 void asynchBatchTest(int pathLimit = 0)
 {
-  std::cout << "Async batch test starts\n";
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
   
@@ -705,6 +703,25 @@ void linearTestNoReuse(int pathLimit = 0)
   std::cout << "LINEAR NO REUSE TEST - execution time: " << difference << "ms.\n";
 }
 
+void asyncUVHandleCallback(uv_async_t *handle)
+{
+  auto AD = (AsynchronousDownloader*)handle->data;
+  uv_close((uv_handle_t*)handle, nullptr);
+  delete handle;
+  // stop handle and free its memory
+  AD->checkHandleQueue();
+  // check number of handles left. if some are left then create a uv_check_t that will add new handles to multi. also mark a flag that uv_check_t was created
+  // uv_check_t will delete be deleted in its callback
+}
+
+void AsynchronousDownloader::makeLoopCheckQueueAsync()
+{
+  auto asyncHandle = new uv_async_t();
+  asyncHandle->data = this;
+  uv_async_init(loop, asyncHandle, asyncUVHandleCallback);
+  uv_async_send(asyncHandle);
+}
+
 void printUpdatedPaths()
 {
   auto paths = createPaths();
@@ -723,11 +740,14 @@ int main()
     return 1;
   }
 
-  int testSize = 480;
-  blockingBatchTest(testSize);
-  asynchBatchTest(testSize);
-  linearTest(testSize);
-  linearTestNoReuse(testSize);
+  printUpdatedPaths();
+
+  // std::cout << "Miau\n\n";
+  // int testSize = 0;
+  // blockingBatchTest(testSize);
+  // asynchBatchTest(testSize);
+  // linearTest(testSize);
+  // linearTestNoReuse(testSize);
 
   curl_global_cleanup();
   return 0;

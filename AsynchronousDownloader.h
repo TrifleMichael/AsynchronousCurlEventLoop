@@ -28,7 +28,7 @@ class AsynchronousDownloader
 public:
   uint64_t curlBuffer = 800; // miliseconds durning which handle will be left open after last call
   int handlesInUse = 0;
-  int maxHandlesInUse = 80;
+  int maxHandlesInUse = 30;
 
 
   bool closeLoop = false;
@@ -74,6 +74,7 @@ public:
   void checkMultiInfo(void);
   static int startTimeout(CURLM *multi, long timeout_ms, void *userp);
   static int handleSocket(CURL *easy, curl_socket_t s, int action, void *userp, void *socketp);
+  void makeLoopCheckQueueAsync();
   void checkHandleQueue();
   void asynchLoop();
   bool init();

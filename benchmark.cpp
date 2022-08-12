@@ -57,7 +57,8 @@ std::vector<std::string*> createPathsFromMetadata(std::string metadata, std::str
   std::vector<std::string*> paths;
   for(int i = 0; i < len; i++) {
     if (containsAttribute(i, "ObjectType", &doc))
-      paths.push_back(new std::string(getStringAttribute(i, "path", &doc) + "~" + getLongAttribute(i, "validFrom", &doc) + "!" + getStringAttribute(i, "ObjectType", &doc) + "@"));
+      // paths.push_back(new std::string(getStringAttribute(i, "path", &doc) + "~" + getLongAttribute(i, "validFrom", &doc) + "!" + getStringAttribute(i, "ObjectType", &doc) + "@"));
+      paths.push_back(new std::string(baseUrl + "/" + getStringAttribute(i, "path", &doc) + "/" + getLongAttribute(i, "validFrom", &doc) + ","));
   }
   return paths;
 }
