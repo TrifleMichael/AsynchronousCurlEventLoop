@@ -534,6 +534,12 @@ void blockingBatchTest(int pathLimit = 0)
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
   
+  AsynchronousDownloader AD;
+  AD.init();
+  std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
+
+  auto start = std::chrono::system_clock::now();
+
   std::vector<CURL*> handles;
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     CURL* handle = curl_easy_init();
@@ -544,13 +550,6 @@ void blockingBatchTest(int pathLimit = 0)
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
     handles.push_back(handle);
   }
-
-  AsynchronousDownloader AD;
-  AD.init();
-  std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
-
-  auto start = std::chrono::system_clock::now();
-
   std::cout << "Blocking perform starts\n";
   AD.batchBlockingPerform(handles);
   std::cout << "Blocking perform ended\n";
@@ -568,6 +567,13 @@ void asynchBatchTest(int pathLimit = 0)
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
   
+
+  AsynchronousDownloader AD;
+  AD.init();
+  std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
+
+  auto start = std::chrono::system_clock::now();
+
   std::vector<CURL*> handles;
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     CURL* handle = curl_easy_init();
@@ -579,18 +585,10 @@ void asynchBatchTest(int pathLimit = 0)
     handles.push_back(handle);
   }
 
-  AsynchronousDownloader AD;
-  AD.init();
-  std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
-
-  auto start = std::chrono::system_clock::now();
-
   bool requestFinished = false;
   AD.batchAsynchPerform(handles, &requestFinished);
 
-  std::cout << "Waiting\n";
   while (!requestFinished) sleep(0.05);
-  std::cout << "Wait ended\n";
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -684,7 +682,27 @@ void linearTest(int pathLimit = 0)
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
   std::cout << "LINEAR TEST - execution time: " << difference << "ms.\n";
+}
 
+void linearTestNoReuse(int pathLimit = 0)
+{
+  auto paths = createPathsFromCS();
+  std::vector<std::string*> results;
+
+  auto start = std::chrono::system_clock::now();
+
+  for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
+    CURL *handle = curl_easy_init();
+    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
+    results.push_back(new std::string());
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results[i]);
+    curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
+    curl_easy_perform(handle);
+    curl_easy_cleanup(handle);
+  }
+  auto end = std::chrono::system_clock::now();
+  auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  std::cout << "LINEAR NO REUSE TEST - execution time: " << difference << "ms.\n";
 }
 
 void printUpdatedPaths()
@@ -705,10 +723,11 @@ int main()
     return 1;
   }
 
-  int testSize = 20;
+  int testSize = 480;
   blockingBatchTest(testSize);
   asynchBatchTest(testSize);
   linearTest(testSize);
+  linearTestNoReuse(testSize);
 
   curl_global_cleanup();
   return 0;
