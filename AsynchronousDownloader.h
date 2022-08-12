@@ -74,6 +74,7 @@ public:
   void checkMultiInfo(void);
   static int startTimeout(CURLM *multi, long timeout_ms, void *userp);
   static int handleSocket(CURL *easy, curl_socket_t s, int action, void *userp, void *socketp);
+  void checkHandleQueue();
   void asynchLoop();
   bool init();
   CURLcode *blockingPerform(CURL* handle);

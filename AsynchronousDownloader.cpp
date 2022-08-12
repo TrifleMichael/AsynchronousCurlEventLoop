@@ -256,6 +256,21 @@ int AsynchronousDownloader::handleSocket(CURL *easy, curl_socket_t s, int action
   return 0;
 }
 
+void AsynchronousDownloader::checkHandleQueue()
+{
+  if (handlesToBeAdded.size() > 0)
+  {
+    handlesQueueLock.lock();
+    // Add handles without going over the limit
+    while(handlesToBeAdded.size() > 0 && handlesInUse < maxHandlesInUse) {
+      curl_multi_add_handle(curlMultiHandle, handlesToBeAdded.front());
+      handlesInUse++;
+      handlesToBeAdded.erase(handlesToBeAdded.begin());
+    }
+    handlesQueueLock.unlock();
+  }
+}
+
 void checkGlobals(uv_timer_t *handle)
 {
   // std::cout << "checkGlobals\n";
@@ -267,17 +282,7 @@ void checkGlobals(uv_timer_t *handle)
   }
 
   // Check if any handles in queue
-  if (AD->handlesToBeAdded.size() > 0)
-  {
-    AD->handlesQueueLock.lock();
-    // Add handles without going over the limit
-    while(AD->handlesToBeAdded.size() > 0 && AD->handlesInUse < AD->maxHandlesInUse) {
-      curl_multi_add_handle(AD->curlMultiHandle, AD->handlesToBeAdded.front());
-      AD->handlesInUse++;
-      AD->handlesToBeAdded.erase(AD->handlesToBeAdded.begin());
-    }
-    AD->handlesQueueLock.unlock();
-  }
+  AD->checkHandleQueue();
 
   // Join and erase threads that finished running callback functions
   for (int i = 0; i < AD->threadFlagPairVector.size(); i++)
@@ -523,15 +528,16 @@ std::vector<std::string> createPathsFromCS()
   return vec;
 }
 
-void blockingBatchTest()
+void blockingBatchTest(int pathLimit = 0)
 {
+  std::cout << "Blocking test starts\n";
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
   
   std::vector<CURL*> handles;
-  for (auto path : paths) {
+  for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     CURL* handle = curl_easy_init();
-    curl_easy_setopt(handle, CURLOPT_URL, path.c_str());
+    curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
 
     results.push_back(new std::string());
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, results.back());
@@ -539,14 +545,15 @@ void blockingBatchTest()
     handles.push_back(handle);
   }
 
-
   AsynchronousDownloader AD;
   AD.init();
   std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
 
   auto start = std::chrono::system_clock::now();
 
+  std::cout << "Blocking perform starts\n";
   AD.batchBlockingPerform(handles);
+  std::cout << "Blocking perform ended\n";
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -555,22 +562,22 @@ void blockingBatchTest()
   t.join();
 }
 
-void asynchBatchTest()
+void asynchBatchTest(int pathLimit = 0)
 {
+  std::cout << "Async batch test starts\n";
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
   
   std::vector<CURL*> handles;
-  for (auto path : paths) {
+  for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     CURL* handle = curl_easy_init();
-    curl_easy_setopt(handle, CURLOPT_URL, path.c_str());
+    curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
 
     results.push_back(new std::string());
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, results.back());
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
     handles.push_back(handle);
   }
-
 
   AsynchronousDownloader AD;
   AD.init();
@@ -581,7 +588,9 @@ void asynchBatchTest()
   bool requestFinished = false;
   AD.batchAsynchPerform(handles, &requestFinished);
 
+  std::cout << "Waiting\n";
   while (!requestFinished) sleep(0.05);
+  std::cout << "Wait ended\n";
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -656,7 +665,7 @@ void benchmarkTest()
   }
 }
 
-void linearTest()
+void linearTest(int pathLimit = 0)
 {
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
@@ -665,8 +674,7 @@ void linearTest()
   curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
   auto start = std::chrono::system_clock::now();
 
-  for (int i = 0; i < paths.size(); i++)
-  {
+  for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     results.push_back(new std::string());
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, results[i]);
     curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
@@ -697,9 +705,10 @@ int main()
     return 1;
   }
 
-  linearTest();
-  blockingBatchTest();
-  asynchBatchTest();
+  int testSize = 20;
+  blockingBatchTest(testSize);
+  asynchBatchTest(testSize);
+  linearTest(testSize);
 
   curl_global_cleanup();
   return 0;
