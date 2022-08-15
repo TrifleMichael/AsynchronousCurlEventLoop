@@ -56,22 +56,6 @@ void etagTest()
   }
 }
 
-CURL* prepareTestHandle(std::string* dst)
-{
-  // std::cout << "prepareTestHandle\n";
-  CURL* handle = curl_easy_init();
-  curl_easy_setopt(handle, CURLOPT_URL, "http://alice-ccdb.cern.ch/latest/TPC/.*");
-  curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
-  curl_easy_setopt(handle, CURLOPT_WRITEDATA, dst);
-  return handle;
-}
-
-void testCallback(void* data)
-{
-  // std::cout << "testCallback\n";
-  std::cout << "Callback works, data: " << *((std::string*)data) << "\n";
-}
-
 std::vector<std::string> createPathsFromCS()
 {
   std::vector<std::string> vec;
@@ -152,72 +136,6 @@ void asynchBatchTest(int pathLimit = 0)
   std::cout << "ASYNCH BATCH TEST - execution time: " << difference << "ms.\n";
   AD.closeLoop = true;
   t.join();
-}
-
-
-int countDataReceived(std::vector<bool*> flags)
-{
-  int counter = 0;
-  for(int i = 0; i < flags.size(); i++)
-  {
-    if (*flags[i]) {
-      counter++;
-    }
-  }
-  return counter;
-}
-
-void benchmarkTest()
-{
-  // std::cout << "benchmarkTest\n";
-  // auto paths = createPaths();
-  auto paths = createPathsFromCS();
-  std::vector<std::string*> results;
-  std::vector<CURL*> handles;
-  std::vector<bool*> flags;
-
-  AsynchronousDownloader AD;
-  AD.init();
-  std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
-  auto start = std::chrono::system_clock::now();
-
-  // paths.size()
-  for(int i = 0; i < paths.size(); i++) {
-    handles.push_back(new CURL*);
-    handles[i] = curl_easy_init();
-    auto handle = handles[i];
-
-    flags.push_back(new bool(false));
-    results.push_back(new std::string());
-
-    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
-    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results[i]);
-    curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
-
-    AD.asynchPerform(handle, flags[i]);
-  }
-
-  std::cout << "Order placed, waiting for results\n";
-  int oldCounter = countDataReceived(flags);
-  int counter = countDataReceived(flags);
-  while(counter < flags.size()) {
-    counter = countDataReceived(flags);
-    if (oldCounter != counter) {
-      std::cout << flags.size() - counter << " files left\n";
-    }
-    oldCounter = counter;
-    sleep(0.05);
-  }
-
-  auto end = std::chrono::system_clock::now();
-  auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "Measured time is: " << difference << "ms.\n";
-  AD.closeLoop = true;
-  t.join();
-  std::cout << "Thread joined\n";
-  for(int i = 0; i < handles.size(); i++) {
-    curl_easy_cleanup(handles[i]);
-  }
 }
 
 void linearTest(int pathLimit = 0)
