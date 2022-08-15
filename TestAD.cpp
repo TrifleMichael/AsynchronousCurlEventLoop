@@ -2,10 +2,39 @@
 #include "AsynchronousDownloader.h"
 #include <curl/curl.h>
 #include "resources.h"
+#include <unordered_map>
 
 /*
 g++ -std=c++11 TestAD.cpp AsynchronousDownloader.cpp benchmark.cpp -lpthread -lcurl -luv -o TestAD && ./TestAD
 */
+
+void setHandleOptions(CURL* handle, std::string* dst, std::string* headers, std::string* path)
+{
+  curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, writeToString);
+  curl_easy_setopt(handle, CURLOPT_HEADERDATA, headers);
+
+  curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
+  curl_easy_setopt(handle, CURLOPT_WRITEDATA, dst);
+  curl_easy_setopt(handle, CURLOPT_URL, path->c_str());
+  // curl_easy_perform(handle);
+}
+
+std::vector<std::string> createPathsFromCS()
+{
+  std::vector<std::string> vec;
+  std::string temp = "";
+  for(int i = 0; i < pathsCS.size(); i++)
+  {
+    if (pathsCS[i] == ',') {
+      vec.push_back(temp);
+      temp = "";
+    }
+    else {
+      (temp.push_back(pathsCS[i]));
+    }
+  }
+  return vec;
+}
 
 void etagTest()
 {
@@ -56,27 +85,12 @@ void etagTest()
   }
 }
 
-std::vector<std::string> createPathsFromCS()
-{
-  std::vector<std::string> vec;
-  std::string temp = "";
-  for(int i = 0; i < pathsCS.size(); i++)
-  {
-    if (pathsCS[i] == ',') {
-      vec.push_back(temp);
-      temp = "";
-    }
-    else {
-      (temp.push_back(pathsCS[i]));
-    }
-  }
-  return vec;
-}
-
 void blockingBatchTest(int pathLimit = 0)
 {
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
+  std::vector<std::string*> headers;
+  std::unordered_map<std::string, std::string> urlETagMap;
   
   AsynchronousDownloader AD;
   AD.init();
@@ -87,20 +101,23 @@ void blockingBatchTest(int pathLimit = 0)
   std::vector<CURL*> handles;
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     CURL* handle = curl_easy_init();
-    curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
-
     results.push_back(new std::string());
-    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results.back());
-    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
+    headers.push_back(new std::string());
+    setHandleOptions(handle, results.back(), headers.back(), &paths[i]);
     handles.push_back(handle);
   }
   AD.batchBlockingPerform(handles);
-
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
   std::cout << "BLOCKING BATCH TEST - execution time: " << difference << "ms.\n";
   AD.closeLoop = true;
   t.join();
+
+
+  for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
+    urlETagMap[paths[i]] = extractETAG(*headers[i]);
+    // std::cout << "ETAG " << i << " is " << urlETagMap[paths[i]] << "\n";
+  }
 }
 
 void asynchBatchTest(int pathLimit = 0)
@@ -108,7 +125,6 @@ void asynchBatchTest(int pathLimit = 0)
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
   
-
   AsynchronousDownloader AD;
   AD.init();
   std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
@@ -152,10 +168,6 @@ void linearTest(int pathLimit = 0)
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, results[i]);
     curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
     curl_easy_perform(handle);
-    auto ret = curl_easy_perform(handle);
-    if (ret != CURLE_OK) {
-      std::cout << "Error in linearTest, code: " << ret << "\n";
-    }
   }
   curl_easy_cleanup(handle);
   auto end = std::chrono::system_clock::now();
@@ -167,6 +179,7 @@ void linearTestNoReuse(int pathLimit = 0)
 {
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
+  std::unordered_map<std::string, std::string> etags;
 
   auto start = std::chrono::system_clock::now();
 
@@ -176,11 +189,9 @@ void linearTestNoReuse(int pathLimit = 0)
     results.push_back(new std::string());
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, results[i]);
     curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
-    auto ret = curl_easy_perform(handle);
+    curl_easy_perform(handle);
     curl_easy_cleanup(handle);
-    if (ret != CURLE_OK) {
-      std::cout << "Error in linearTestNoReuse, code: " << ret << "\n";
-    }
+
   }
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -197,9 +208,9 @@ int main()
 
   int testSize = 20;
   blockingBatchTest(testSize);
-  asynchBatchTest(testSize);
-  linearTest(testSize);
-  linearTestNoReuse(testSize);
+  // asynchBatchTest(testSize);
+  // linearTest(testSize);
+  // linearTestNoReuse(testSize);
 
   curl_global_cleanup();
 
