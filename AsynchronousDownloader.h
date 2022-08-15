@@ -10,6 +10,7 @@
 #include <thread>     // get_id
 #include <vector>
 #include <mutex>
+#include <condition_variable>
 
 #include <chrono>   // time measurement
 #include <unistd.h> // time measurement
@@ -22,6 +23,8 @@ void timerCallback(uv_timer_t *handle);
 void on_timeout(uv_timer_t *req);
 void curl_perform(uv_poll_t *req, int status, int events);
 void checkGlobals(uv_timer_t *handle);
+size_t writeToString(void *contents, size_t size, size_t nmemb, std::string *dst);
+std::string extractETAG(std::string headers);
 
 class AsynchronousDownloader
 {
