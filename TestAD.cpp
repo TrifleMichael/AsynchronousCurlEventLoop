@@ -36,55 +36,6 @@ std::vector<std::string> createPathsFromCS()
   return vec;
 }
 
-void etagTest()
-{
-  std::string dst;
-  std::string headers;
-  CURL *handle = curl_easy_init();
-  curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, writeToString);
-  curl_easy_setopt(handle, CURLOPT_HEADERDATA, &headers);
-
-  curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
-  curl_easy_setopt(handle, CURLOPT_WRITEDATA, &dst);
-  curl_easy_setopt(handle, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/MFT/Config/AlpideParam/1");
-  auto res = curl_easy_perform(handle);
-  curl_easy_cleanup(handle);
-
-  if (res != CURLE_OK) {
-    std::cout << "Oops\n";
-  } else {
-    std::cout << dst << "\n";
-    std::cout << "-------------------------------------\n";
-    std::cout << headers << "\n";
-    std::cout << "ETAG: " << extractETAG(headers) << "\n";
-  }
-
-  std::cout << "\nSECOND TRY\n\n";
-
-  CURL *handle2 = curl_easy_init();
-  std::string dst2;
-  curl_easy_setopt(handle2, CURLOPT_WRITEFUNCTION, writeToString);
-  curl_easy_setopt(handle2, CURLOPT_WRITEDATA, &dst2);
-  curl_easy_setopt(handle2, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/MFT/Config/AlpideParam/1");
-
-  struct curl_slist *curlHeaders=NULL;
-  std::string etagHeader = "If-None-Match: \"" + extractETAG(headers) + "\"";
-  std::cout << "etagHeader: " << etagHeader << "\n";
-  curlHeaders = curl_slist_append(curlHeaders, etagHeader.c_str());
-  curl_easy_setopt(handle2, CURLOPT_HTTPHEADER, curlHeaders);
-
-  auto res2 = curl_easy_perform(handle2);
-  long ret;
-  curl_easy_getinfo(handle2, CURLINFO_RESPONSE_CODE, &ret);
-  curl_easy_cleanup(handle2);
-  if (res2 != CURLE_OK) {
-    std::cout << "It didn't work. Code: " << res2 << "\n";
-  } else {
-    std::cout << "DST2" << dst2 << "\n";
-    std::cout << "Ret" << ret << "\n";
-  }
-}
-
 void blockingBatchTest(int pathLimit = 0)
 {
   // Preparing for downloading
@@ -111,7 +62,6 @@ void blockingBatchTest(int pathLimit = 0)
   AD.batchBlockingPerform(handles);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "BLOCKING BATCH TEST - execution time: " << difference << "ms.\n";
 
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
@@ -149,7 +99,7 @@ void blockingBatchTest(int pathLimit = 0)
 
   auto end2 = std::chrono::system_clock::now();
   auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
-  std::cout << "BLOCKING BATCH TEST RECHECKING - execution time: " << difference2 << "ms.\n";
+  std::cout << "BLOCKING BATCH TEST:  download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
 
   // Cleaning up
   AD.closeLoop = true;
@@ -184,8 +134,6 @@ void asynchBatchTest(int pathLimit = 0)
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "ASYNCH BATCH TEST - execution time: " << difference << "ms.\n";
-
 
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
@@ -226,7 +174,7 @@ void asynchBatchTest(int pathLimit = 0)
 
   auto end2 = std::chrono::system_clock::now();
   auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
-  std::cout << "ASYNC BATCH TEST RECHECKING - execution time: " << difference2 << "ms.\n";
+  std::cout << "ASYNC BATCH TEST:     download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
 
   // Cleaning up
   AD.closeLoop = true;
@@ -253,7 +201,6 @@ void linearTest(int pathLimit = 0)
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "LINEAR TEST - execution time: " << difference << "ms.\n";
 
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
@@ -285,7 +232,7 @@ void linearTest(int pathLimit = 0)
 
   auto end2 = std::chrono::system_clock::now();
   auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
-  std::cout << "LINEAR TEST RECHECKING - execution time: " << difference2 << "ms.\n";
+  std::cout << "LINEAR TEST:          download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
 
 }
 
@@ -309,7 +256,6 @@ void linearTestNoReuse(int pathLimit = 0)
   }
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "LINEAR NO REUSE TEST - execution time: " << difference << "ms.\n";
 
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
@@ -343,7 +289,7 @@ void linearTestNoReuse(int pathLimit = 0)
 
   auto end2 = std::chrono::system_clock::now();
   auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
-  std::cout << "LINEAR NO REUSE TEST RECHECKING - execution time: " << difference2 << "ms.\n";
+  std::cout << "LINEAR NO REUSE TEST: download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
 
 }
 
@@ -355,7 +301,9 @@ int main()
     return 1;
   }
 
-  int testSize = 20;
+  // TEST SEEMS TO BREAK FOR 300 OBJECTS. CHECK WHY!
+  int testSize = 50;
+  std::cout << "-------------- Testing for " << testSize << " objects. -----------\n";
   blockingBatchTest(testSize);
   asynchBatchTest(testSize);
   linearTest(testSize);
