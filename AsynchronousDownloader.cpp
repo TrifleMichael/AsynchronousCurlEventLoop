@@ -732,6 +732,60 @@ void printUpdatedPaths()
   std::cout << "\n\n\n\nDone\n";
 }
 
+std::string extractETAG(std::string headers)
+{
+  auto etagLine = headers.find("ETag");
+  auto etagStart = headers.find("\"", etagLine)+1;
+  auto etagEnd = headers.find("\"", etagStart+1);
+  return headers.substr(etagStart, etagEnd - etagStart);
+}
+
+void etagTest()
+{
+  std::string dst;
+  std::string headers;
+  CURL *handle = curl_easy_init();
+  curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, writeToString);
+  curl_easy_setopt(handle, CURLOPT_HEADERDATA, &headers);
+
+  curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
+  curl_easy_setopt(handle, CURLOPT_WRITEDATA, &dst);
+  curl_easy_setopt(handle, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/MFT/Config/AlpideParam/1");
+  auto res = curl_easy_perform(handle);
+  curl_easy_cleanup(handle);
+
+  if (res != CURLE_OK) {
+    std::cout << "Oops\n";
+  } else {
+    std::cout << dst << "\n";
+    std::cout << "-------------------------------------\n";
+    std::cout << headers << "\n";
+    std::cout << "ETAG: " << extractETAG(headers) << "\n";
+  }
+
+  std::cout << "\nSECOND TRY\n\n";
+
+  CURL *handle2 = curl_easy_init();
+  std::string dst2;
+  curl_easy_setopt(handle2, CURLOPT_WRITEFUNCTION, writeToString);
+  curl_easy_setopt(handle2, CURLOPT_WRITEDATA, &dst2);
+  curl_easy_setopt(handle2, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/MFT/Config/AlpideParam/1");
+
+  struct curl_slist *curlHeaders=NULL;
+  std::string etagHeader = "If-None-Match: \"" + extractETAG(headers) + "\"";
+  std::cout << "etagHeader: " << etagHeader << "\n";
+  curlHeaders = curl_slist_append(curlHeaders, etagHeader.c_str());
+  curl_easy_setopt(handle2, CURLOPT_HTTPHEADER, curlHeaders);
+
+  auto res2 = curl_easy_perform(handle2);
+  curl_easy_cleanup(handle2);
+  if (res2 != CURLE_OK) {
+    std::cout << "It didn't work. Code: " << res2 << "\n";
+  } else {
+    std::cout << "DST2" << dst2 << "\n";
+  }
+}
+
 int main()
 {
   if (curl_global_init(CURL_GLOBAL_ALL))
@@ -740,7 +794,8 @@ int main()
     return 1;
   }
 
-  printUpdatedPaths();
+  etagTest();
+  // printUpdatedPaths();
 
   // std::cout << "Miau\n\n";
   // int testSize = 0;
@@ -748,6 +803,7 @@ int main()
   // asynchBatchTest(testSize);
   // linearTest(testSize);
   // linearTestNoReuse(testSize);
+
 
   curl_global_cleanup();
   return 0;
