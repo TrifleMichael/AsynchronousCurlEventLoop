@@ -25,6 +25,7 @@ g++ -std=c++11 AsynchronousDownloader.cpp benchmark.cpp -lpthread -lcurl -luv -o
 /*
 TODO:
 
+- check what can be free'd in constructor
 - change name "checkGlobals"
 - pooling threads only when they exist
 
@@ -37,6 +38,39 @@ Information:
 - Keepalive for http is set to 118 seconds by default by CURL Source: https://stackoverflow.com/questions/60141625/libcurl-how-does-connection-keep-alive-work
 
 */
+
+AsynchronousDownloader::AsynchronousDownloader()
+{
+  // Preparing loop timer
+  timeout = new uv_timer_t();
+  timeout->data = this;
+  loop = uv_default_loop();
+  uv_timer_init(loop, timeout);
+
+  // Preparing curl handle
+  curlMultiHandle = curl_multi_init();
+  curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETFUNCTION, handleSocket);
+  auto socketData = new DataForSocket();
+  socketData->curlm = curlMultiHandle;
+  socketData->objPtr = this;
+  curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETDATA, socketData);
+  curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERFUNCTION, startTimeout);
+  curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERDATA, timeout);
+
+  // Preparing queue checking timer
+  auto timerCheckQueueHandle = new uv_timer_t();
+  timerCheckQueueHandle->data = this;
+  uv_timer_init(loop, timerCheckQueueHandle);
+  uv_timer_start(timerCheckQueueHandle, checkGlobals, 100, 100);
+
+  loopThread = new std::thread(&AsynchronousDownloader::asynchLoop, this);
+}
+
+AsynchronousDownloader::~AsynchronousDownloader()
+{
+  closeLoop = true;
+  loopThread->join();
+}
 
 void onTimeout(uv_timer_t *req)
 {

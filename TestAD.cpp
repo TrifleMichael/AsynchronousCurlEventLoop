@@ -61,8 +61,6 @@ void blockingBatchTest(int pathLimit = 0)
   std::unordered_map<std::string, std::string> urlETagMap;
   
   AsynchronousDownloader AD;
-  AD.init();
-  std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
 
   auto start = std::chrono::system_clock::now();
 
@@ -121,10 +119,6 @@ void blockingBatchTest(int pathLimit = 0)
   auto end2 = std::chrono::system_clock::now();
   auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
   std::cout << "BLOCKING BATCH TEST:  download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
-
-  // Cleaning up
-  AD.closeLoop = true;
-  t.join();
 }
 
 void asynchBatchTest(int pathLimit = 0)
@@ -137,8 +131,6 @@ void asynchBatchTest(int pathLimit = 0)
   
   // Preparing downloader
   AsynchronousDownloader AD;
-  AD.init();
-  std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
 
   auto start = std::chrono::system_clock::now();
 
@@ -203,10 +195,6 @@ void asynchBatchTest(int pathLimit = 0)
   auto end2 = std::chrono::system_clock::now();
   auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
   std::cout << "ASYNC BATCH TEST:     download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
-
-  // Cleaning up
-  AD.closeLoop = true;
-  t.join();
 }
 
 void linearTest(int pathLimit = 0)

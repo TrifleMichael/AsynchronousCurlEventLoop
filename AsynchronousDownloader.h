@@ -36,6 +36,7 @@ public:
   uv_timer_t *timeout;
   std::vector<CURL*> handlesToBeAdded;
   std::mutex handlesQueueLock;
+  std::thread *loopThread;
   
 
   std::vector< std::pair<std::thread*, bool*> > threadFlagPairVector;
@@ -67,6 +68,8 @@ public:
     size_t *requestsLeft;
   } PerformData;
 
+  AsynchronousDownloader();
+  ~AsynchronousDownloader();
   static curl_context_t *createCurlContext(curl_socket_t sockfd, AsynchronousDownloader *objPtr);
   static void curlCloseCB(uv_handle_t *handle);
   static void destroyCurlContext(curl_context_t *context);
