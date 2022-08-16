@@ -1,6 +1,5 @@
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <uv.h>
 #include <curl/curl.h>
 #include <string>
@@ -17,6 +16,9 @@
 #include "AsynchronousDownloader.h"
 #include "benchmark.h"
 
+#include "resources.h"
+#include <unordered_map>
+
 /*
 g++ -std=c++11 AsynchronousDownloader.cpp -lpthread -lcurl -luv -o main && ./main
 g++ -std=c++11 AsynchronousDownloader.cpp benchmark.cpp -lpthread -lcurl -luv -o main && ./main
@@ -25,7 +27,11 @@ g++ -std=c++11 AsynchronousDownloader.cpp benchmark.cpp -lpthread -lcurl -luv -o
 /*
 TODO:
 
-- check what can be free'd in constructor
+- add asynchronous closeLoop call
+
+- check what can be free'd in destructor
+- free things in checkMultiInfo
+
 - change name "checkGlobals"
 - pooling threads only when they exist
 
@@ -37,15 +43,17 @@ Information:
 - Curl multi handle automatically reuses connections. Source: https://everything.curl.dev/libcurl/connectionreuse
 - Keepalive for http is set to 118 seconds by default by CURL Source: https://stackoverflow.com/questions/60141625/libcurl-how-does-connection-keep-alive-work
 
+The user should not close a file descriptor while it is being polled by an active poll handle. : http://docs.libuv.org/en/v1.x/poll.html
 */
+std::chrono::_V2::system_clock::time_point startT;
 
 AsynchronousDownloader::AsynchronousDownloader()
 {
   // Preparing loop timer
   timeout = new uv_timer_t();
   timeout->data = this;
-  loop = uv_default_loop();
-  uv_timer_init(loop, timeout);
+  uv_loop_init(&loop);
+  uv_timer_init(&loop, timeout);
 
   // Preparing curl handle
   curlMultiHandle = curl_multi_init();
@@ -60,7 +68,7 @@ AsynchronousDownloader::AsynchronousDownloader()
   // Preparing queue checking timer
   auto timerCheckQueueHandle = new uv_timer_t();
   timerCheckQueueHandle->data = this;
-  uv_timer_init(loop, timerCheckQueueHandle);
+  uv_timer_init(&loop, timerCheckQueueHandle);
   uv_timer_start(timerCheckQueueHandle, checkGlobals, 100, 100);
 
   loopThread = new std::thread(&AsynchronousDownloader::asynchLoop, this);
@@ -85,21 +93,32 @@ AsynchronousDownloader::~AsynchronousDownloader()
   // Close async thread
   closeLoop = true;
   loopThread->join();
+  free(loopThread);
 
   // Close and if any handles are running then signal to close and run loop once to close them
   // This may take more then one iteration of loop - hence the "while"
-  while (UV_EBUSY == uv_loop_close(loop)) {
+  while (UV_EBUSY == uv_loop_close(&loop)) {
     closeLoop = false;
-    uv_walk(loop, closeHandles, NULL);
-    uv_run(loop, UV_RUN_ONCE);
+    uv_walk(&loop, closeHandles, NULL);
+    uv_run(&loop, UV_RUN_ONCE);
   }
+  curl_multi_cleanup(curlMultiHandle);
 }
 
+bool timeout = false;
 void onTimeout(uv_timer_t *req)
 {
   // std::cout << "onTimeout\n";
   auto AD = (AsynchronousDownloader *)req->data;
   int running_handles;
+  if (!timeout) {
+    std::cout << "Timeout\n";
+      timeout = true;
+    auto end2 = std::chrono::system_clock::now();
+    auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - startT).count();
+    auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(startT - end2).count();
+    std::cout << "Time - " << difference << ", reverse " << difference2 <<  "ms.\n";
+  }
   curl_multi_socket_action(AD->curlMultiHandle, CURL_SOCKET_TIMEOUT, 0,
                            &running_handles);
   AD->checkMultiInfo();
@@ -108,6 +127,7 @@ void onTimeout(uv_timer_t *req)
 // Is used to react to polling file descriptors in poll_handle
 // Calls handle_socket indirectly for further reading*
 // If call is finished closes handle indirectly by check multi info
+bool perform = false;
 void curl_perform(uv_poll_t *req, int status, int events)
 {
   // std::cout << "curl_perform\n";
@@ -121,6 +141,10 @@ void curl_perform(uv_poll_t *req, int status, int events)
 
   auto context = (AsynchronousDownloader::curl_context_t *)req->data;
   
+  if (!perform) {
+    std::cout << "Perform\n";
+    perform = true;
+  }
   curl_multi_socket_action(context->objPtr->curlMultiHandle, context->sockfd, flags,
                            &running_handles);
   context->objPtr->checkMultiInfo();
@@ -136,7 +160,7 @@ AsynchronousDownloader::curl_context_t *AsynchronousDownloader::createCurlContex
   context->objPtr = objPtr;
   context->sockfd = sockfd;
 
-  uv_poll_init_socket(objPtr->loop, &context->poll_handle, sockfd);
+  uv_poll_init_socket(&objPtr->loop, &context->poll_handle, sockfd);
   context->poll_handle.data = context;
 
   return context;
@@ -336,9 +360,6 @@ void checkGlobals(uv_timer_t *handle)
     uv_timer_stop(handle);
   }
 
-  // Check if any handles in queue
-  // AD->checkHandleQueue();
-
   // Join and erase threads that finished running callback functions
   for (int i = 0; i < AD->threadFlagPairVector.size(); i++)
   {
@@ -352,48 +373,10 @@ void checkGlobals(uv_timer_t *handle)
   }
 }
 
-bool AsynchronousDownloader::init()
-{
-  // std::cout << "init\n";
-
-  // Preparing loop timer
-  timeout = new uv_timer_t();
-  timeout->data = this;
-  loop = uv_default_loop();
-  uv_timer_init(loop, timeout);
-
-  // Preparing curl handle
-  curlMultiHandle = curl_multi_init();
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETFUNCTION, handleSocket);
-  auto socketData = new DataForSocket();
-  socketData->curlm = curlMultiHandle;
-  socketData->objPtr = this;
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETDATA, socketData);
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERFUNCTION, startTimeout);
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERDATA, timeout);
-
-  // Preparing queue checking timer
-  auto timerCheckQueueHandle = new uv_timer_t();
-  timerCheckQueueHandle->data = this;
-  uv_timer_init(loop, timerCheckQueueHandle);
-  uv_timer_start(timerCheckQueueHandle, checkGlobals, 100, 100);
-
-  return true;
-}
-
 void AsynchronousDownloader::asynchLoop()
 {
   // std::cout << "asynchLoop\n";
-  uv_run(loop, UV_RUN_DEFAULT);
-
-  curl_multi_cleanup(curlMultiHandle);
-
-  // // Cleaning UV loop
-  // std::cout << "\nIs loop alive? " << uv_loop_alive(loop) << "\n";
-  // uv_stop(loop);
-  // std::cout << "Is loop alive? " << uv_loop_alive(loop) << "\n";
-  // std::cout << "Loop closed properly? " << (uv_loop_close(loop) != UV_EBUSY)  << "\n";
-  // free(loop);
+  uv_run(&loop, UV_RUN_DEFAULT);
 }
 
 std::vector<CURLcode*> AsynchronousDownloader::batchAsynchPerform(std::vector<CURL*> handleVector, bool *completionFlag)
@@ -555,18 +538,8 @@ void AsynchronousDownloader::makeLoopCheckQueueAsync()
 {
   auto asyncHandle = new uv_async_t();
   asyncHandle->data = this;
-  uv_async_init(loop, asyncHandle, asyncUVHandleCallback);
+  uv_async_init(&loop, asyncHandle, asyncUVHandleCallback);
   uv_async_send(asyncHandle);
-}
-
-void printUpdatedPaths()
-{
-  auto paths = createPaths();
-  std::cout << "Done\n\n\n\n";
-  for(auto path : paths) {
-    std::cout << *path;
-  }
-  std::cout << "\n\n\n\nDone\n";
 }
 
 std::string extractETAG(std::string headers)
@@ -579,24 +552,136 @@ std::string extractETAG(std::string headers)
 
 
 
-// int main()
-// {
-//   // if (curl_global_init(CURL_GLOBAL_ALL))
-//   // {
-//   //   fprintf(stderr, "Could not init curl\n");
-//   //   return 1;
-//   // }
-
-//   // etagTest();
-//   // printUpdatedPaths();
-
-//   // int testSize = 0;
-//   // blockingBatchTest(testSize);
-//   // asynchBatchTest(testSize);
-//   // linearTest(testSize);
-//   // linearTestNoReuse(testSize);
 
 
-//   // curl_global_cleanup();
-//   return 0;
-// }
+
+
+
+
+
+
+
+
+
+
+size_t writeToString(void *contents, size_t size, size_t nmemb, std::string *dst)
+{
+  // std::cout << "writeToString\n";
+  char *conts = (char *)contents;
+  for (int i = 0; i < nmemb; i++)
+  {
+    (*dst) += *(conts++);
+  }
+  return size * nmemb;
+}
+
+
+std::vector<std::string> createPathsFromCS()
+{
+  std::vector<std::string> vec;
+  std::string temp = "";
+  for(int i = 0; i < pathsCS.size(); i++)
+  {
+    if (pathsCS[i] == ',') {
+      vec.push_back(temp);
+      temp = "";
+    }
+    else {
+      (temp.push_back(pathsCS[i]));
+    }
+  }
+  return vec;
+}
+
+void setHandleOptions(CURL* handle, std::string* dst, std::string* headers, std::string* path)
+{
+  curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, writeToString);
+  curl_easy_setopt(handle, CURLOPT_HEADERDATA, headers);
+
+  curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
+  curl_easy_setopt(handle, CURLOPT_WRITEDATA, dst);
+  curl_easy_setopt(handle, CURLOPT_URL, path->c_str());
+}
+
+void cleanAllHandles(std::vector<CURL*> handles)
+{
+  for(auto handle : handles)
+    curl_easy_cleanup(handle);
+}
+
+void blockingBatchTest(int pathLimit = 0)
+{
+  // Preparing for downloading
+  auto paths = createPathsFromCS();
+  std::vector<std::string*> results;
+  std::vector<std::string*> headers;
+  std::unordered_map<std::string, std::string> urlETagMap;
+  
+  AsynchronousDownloader AD;
+
+  auto start = std::chrono::system_clock::now();
+
+  std::vector<CURL*> handles;
+  for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
+    handles.push_back(curl_easy_init());
+    results.push_back(new std::string());
+    headers.push_back(new std::string());
+    setHandleOptions(handles.back(), results.back(), headers.back(), &paths[i]);
+  }
+
+  // Downloading objects
+  startT = std::chrono::system_clock::now();
+  AD.batchBlockingPerform(handles);
+  cleanAllHandles(handles);
+  auto end = std::chrono::system_clock::now();
+  auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  // Extracting etags
+  for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
+    urlETagMap[paths[i]] = extractETAG(*headers[i]);
+  }
+
+  // Preparing for checking objects validity
+  auto start2 = std::chrono::system_clock::now();
+
+  std::vector<std::string*> results2;
+  std::vector<CURL*> handles2;
+  for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
+    auto handle = curl_easy_init();
+    results2.push_back(new std::string());
+    handles2.push_back(handle);
+    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results2.back());
+    curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
+
+    std::string etagHeader = "If-None-Match: \"" + urlETagMap[paths[i]] + "\"";
+    struct curl_slist *curlHeaders = nullptr;
+    curlHeaders = curl_slist_append(curlHeaders, etagHeader.c_str());
+    curl_easy_setopt(handle, CURLOPT_HTTPHEADER, curlHeaders);
+  }
+
+  // Checking objects validity
+
+  AD.batchBlockingPerform(handles2);
+  for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
+    long code;
+    curl_easy_getinfo(handles2[i], CURLINFO_RESPONSE_CODE, &code);
+    if (code != 304) {
+      char* url;
+      curl_easy_getinfo(handles2[i], CURLINFO_EFFECTIVE_URL, &url);
+      std::cout << "INVALID CODE: " << code << ", URL: " << url << "\n";
+    }
+  }
+
+  // Clean handles and print time
+  cleanAllHandles(handles2);
+  auto end2 = std::chrono::system_clock::now();
+  auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
+  std::cout << "BLOCKING BATCH TEST:  download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
+}
+
+
+int main()
+{
+  blockingBatchTest(0);
+  return 0;
+}
