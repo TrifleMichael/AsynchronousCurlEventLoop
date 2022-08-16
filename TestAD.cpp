@@ -8,6 +8,12 @@
 g++ -std=c++11 TestAD.cpp AsynchronousDownloader.cpp benchmark.cpp -lpthread -lcurl -luv -o TestAD && ./TestAD
 */
 
+void cleanAllHandles(std::vector<CURL*> handles)
+{
+  for(auto handle : handles)
+    curl_easy_cleanup(handle);
+}
+
 void setHandleOptions(CURL* handle, std::string* dst, std::string* headers, std::string* path)
 {
   curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, writeToString);
@@ -60,9 +66,9 @@ void blockingBatchTest(int pathLimit = 0)
 
   // Downloading objects
   AD.batchBlockingPerform(handles);
+  cleanAllHandles(handles);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
@@ -81,22 +87,26 @@ void blockingBatchTest(int pathLimit = 0)
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, results2.back());
     curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
 
-    std::string etagHeader = "If-None-Match: \"" + extractETAG(urlETagMap[paths[i]]) + "\"";
+    std::string etagHeader = "If-None-Match: \"" + urlETagMap[paths[i]] + "\"";
     struct curl_slist *curlHeaders = nullptr;
     curlHeaders = curl_slist_append(curlHeaders, etagHeader.c_str());
     curl_easy_setopt(handle, CURLOPT_HTTPHEADER, curlHeaders);
   }
 
   // Checking objects validity
+
   AD.batchBlockingPerform(handles2);
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     long code;
     curl_easy_getinfo(handles2[i], CURLINFO_RESPONSE_CODE, &code);
     if (code != 304) {
-      std::cout << "INVALID CODE: " << code << "\n";
+      char* url;
+      curl_easy_getinfo(handles2[i], CURLINFO_EFFECTIVE_URL, &url);
+      std::cout << "INVALID CODE: " << code << ", URL: " << url << "\n";
     }
   }
 
+  cleanAllHandles(handles2);
   auto end2 = std::chrono::system_clock::now();
   auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
   std::cout << "BLOCKING BATCH TEST:  download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
@@ -132,9 +142,9 @@ void asynchBatchTest(int pathLimit = 0)
 
   while (!requestFinished) sleep(0.05);
 
+  cleanAllHandles(handles);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
@@ -163,6 +173,7 @@ void asynchBatchTest(int pathLimit = 0)
   bool requestFinished2 = false;
   AD.batchAsynchPerform(handles2, &requestFinished2);
   while (!requestFinished2) sleep(0.001);
+  cleanAllHandles(handles2);
 
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     long code;
@@ -201,7 +212,6 @@ void linearTest(int pathLimit = 0)
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
@@ -230,6 +240,7 @@ void linearTest(int pathLimit = 0)
     }
   }
 
+  curl_easy_cleanup(handle);
   auto end2 = std::chrono::system_clock::now();
   auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
   std::cout << "LINEAR TEST:          download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
@@ -256,7 +267,6 @@ void linearTestNoReuse(int pathLimit = 0)
   }
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
@@ -301,9 +311,13 @@ int main()
     return 1;
   }
 
-  // TEST SEEMS TO BREAK FOR 300 OBJECTS. CHECK WHY!
-  int testSize = 50;
-  std::cout << "-------------- Testing for " << testSize << " objects. -----------\n";
+  int testSize = 0;
+
+  if (testSize != 0)
+    std::cout << "-------------- Testing for " << testSize << " objects. -----------\n";
+  else
+    std::cout << "-------------- Testing for all objects. -----------\n";
+
   blockingBatchTest(testSize);
   asynchBatchTest(testSize);
   linearTest(testSize);

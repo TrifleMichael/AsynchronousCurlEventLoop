@@ -65,7 +65,7 @@ void curl_perform(uv_poll_t *req, int status, int events)
     flags |= CURL_CSELECT_OUT;
 
   auto context = (AsynchronousDownloader::curl_context_t *)req->data;
-
+  
   curl_multi_socket_action(context->objPtr->curlMultiHandle, context->sockfd, flags,
                            &running_handles);
   context->objPtr->checkMultiInfo();
@@ -184,7 +184,7 @@ void AsynchronousDownloader::checkMultiInfo(void)
           }
         }
       }
-      curl_easy_cleanup(easy_handle);
+      // curl_easy_cleanup(easy_handle);
       checkHandleQueue();
     }
     break;
@@ -548,7 +548,6 @@ std::string extractETAG(std::string headers)
 //   // etagTest();
 //   // printUpdatedPaths();
 
-//   // std::cout << "Miau\n\n";
 //   // int testSize = 0;
 //   // blockingBatchTest(testSize);
 //   // asynchBatchTest(testSize);
