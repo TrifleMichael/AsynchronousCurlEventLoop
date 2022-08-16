@@ -25,7 +25,11 @@ g++ -std=c++11 AsynchronousDownloader.cpp benchmark.cpp -lpthread -lcurl -luv -o
 /*
 TODO:
 
-- check what can be free'd in constructor
+- add asynchronous closeLoop call
+
+- check what can be free'd in destructor
+- free things in checkMultiInfo
+
 - change name "checkGlobals"
 - pooling threads only when they exist
 
@@ -44,8 +48,8 @@ AsynchronousDownloader::AsynchronousDownloader()
   // Preparing loop timer
   timeout = new uv_timer_t();
   timeout->data = this;
-  loop = uv_default_loop();
-  uv_timer_init(loop, timeout);
+  uv_loop_init(&loop);
+  uv_timer_init(&loop, timeout);
 
   // Preparing curl handle
   curlMultiHandle = curl_multi_init();
@@ -60,7 +64,7 @@ AsynchronousDownloader::AsynchronousDownloader()
   // Preparing queue checking timer
   auto timerCheckQueueHandle = new uv_timer_t();
   timerCheckQueueHandle->data = this;
-  uv_timer_init(loop, timerCheckQueueHandle);
+  uv_timer_init(&loop, timerCheckQueueHandle);
   uv_timer_start(timerCheckQueueHandle, checkGlobals, 100, 100);
 
   loopThread = new std::thread(&AsynchronousDownloader::asynchLoop, this);
@@ -85,14 +89,16 @@ AsynchronousDownloader::~AsynchronousDownloader()
   // Close async thread
   closeLoop = true;
   loopThread->join();
+  free(loopThread);
 
   // Close and if any handles are running then signal to close and run loop once to close them
   // This may take more then one iteration of loop - hence the "while"
-  while (UV_EBUSY == uv_loop_close(loop)) {
+  while (UV_EBUSY == uv_loop_close(&loop)) {
     closeLoop = false;
-    uv_walk(loop, closeHandles, NULL);
-    uv_run(loop, UV_RUN_ONCE);
+    uv_walk(&loop, closeHandles, NULL);
+    uv_run(&loop, UV_RUN_ONCE);
   }
+  curl_multi_cleanup(curlMultiHandle);
 }
 
 void onTimeout(uv_timer_t *req)
@@ -136,7 +142,7 @@ AsynchronousDownloader::curl_context_t *AsynchronousDownloader::createCurlContex
   context->objPtr = objPtr;
   context->sockfd = sockfd;
 
-  uv_poll_init_socket(objPtr->loop, &context->poll_handle, sockfd);
+  uv_poll_init_socket(&objPtr->loop, &context->poll_handle, sockfd);
   context->poll_handle.data = context;
 
   return context;
@@ -336,9 +342,6 @@ void checkGlobals(uv_timer_t *handle)
     uv_timer_stop(handle);
   }
 
-  // Check if any handles in queue
-  // AD->checkHandleQueue();
-
   // Join and erase threads that finished running callback functions
   for (int i = 0; i < AD->threadFlagPairVector.size(); i++)
   {
@@ -352,48 +355,10 @@ void checkGlobals(uv_timer_t *handle)
   }
 }
 
-bool AsynchronousDownloader::init()
-{
-  // std::cout << "init\n";
-
-  // Preparing loop timer
-  timeout = new uv_timer_t();
-  timeout->data = this;
-  loop = uv_default_loop();
-  uv_timer_init(loop, timeout);
-
-  // Preparing curl handle
-  curlMultiHandle = curl_multi_init();
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETFUNCTION, handleSocket);
-  auto socketData = new DataForSocket();
-  socketData->curlm = curlMultiHandle;
-  socketData->objPtr = this;
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETDATA, socketData);
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERFUNCTION, startTimeout);
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERDATA, timeout);
-
-  // Preparing queue checking timer
-  auto timerCheckQueueHandle = new uv_timer_t();
-  timerCheckQueueHandle->data = this;
-  uv_timer_init(loop, timerCheckQueueHandle);
-  uv_timer_start(timerCheckQueueHandle, checkGlobals, 100, 100);
-
-  return true;
-}
-
 void AsynchronousDownloader::asynchLoop()
 {
   // std::cout << "asynchLoop\n";
-  uv_run(loop, UV_RUN_DEFAULT);
-
-  curl_multi_cleanup(curlMultiHandle);
-
-  // // Cleaning UV loop
-  // std::cout << "\nIs loop alive? " << uv_loop_alive(loop) << "\n";
-  // uv_stop(loop);
-  // std::cout << "Is loop alive? " << uv_loop_alive(loop) << "\n";
-  // std::cout << "Loop closed properly? " << (uv_loop_close(loop) != UV_EBUSY)  << "\n";
-  // free(loop);
+  uv_run(&loop, UV_RUN_DEFAULT);
 }
 
 std::vector<CURLcode*> AsynchronousDownloader::batchAsynchPerform(std::vector<CURL*> handleVector, bool *completionFlag)
@@ -555,7 +520,7 @@ void AsynchronousDownloader::makeLoopCheckQueueAsync()
 {
   auto asyncHandle = new uv_async_t();
   asyncHandle->data = this;
-  uv_async_init(loop, asyncHandle, asyncUVHandleCallback);
+  uv_async_init(&loop, asyncHandle, asyncUVHandleCallback);
   uv_async_send(asyncHandle);
 }
 
@@ -576,27 +541,3 @@ std::string extractETAG(std::string headers)
   auto etagEnd = headers.find("\"", etagStart+1);
   return headers.substr(etagStart, etagEnd - etagStart);
 }
-
-
-
-// int main()
-// {
-//   // if (curl_global_init(CURL_GLOBAL_ALL))
-//   // {
-//   //   fprintf(stderr, "Could not init curl\n");
-//   //   return 1;
-//   // }
-
-//   // etagTest();
-//   // printUpdatedPaths();
-
-//   // int testSize = 0;
-//   // blockingBatchTest(testSize);
-//   // asynchBatchTest(testSize);
-//   // linearTest(testSize);
-//   // linearTestNoReuse(testSize);
-
-
-//   // curl_global_cleanup();
-//   return 0;
-// }

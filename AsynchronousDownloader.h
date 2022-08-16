@@ -27,17 +27,15 @@ class AsynchronousDownloader
 {
 public:
   int handlesInUse = 0;
-  static int const maxHandlesInUse = 20; // static and constant just for testing
-
+  static int const maxHandlesInUse = 5; // static and constant just for testing
 
   bool closeLoop = false;
-  uv_loop_t *loop = nullptr;
+  uv_loop_t loop;
   CURLM *curlMultiHandle = nullptr;
   uv_timer_t *timeout;
   std::vector<CURL*> handlesToBeAdded;
   std::mutex handlesQueueLock;
-  std::thread *loopThread;
-  
+  std::thread *loopThread;  
 
   std::vector< std::pair<std::thread*, bool*> > threadFlagPairVector;
 
