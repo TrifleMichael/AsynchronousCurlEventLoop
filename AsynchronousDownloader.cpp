@@ -27,16 +27,14 @@ TODO:
 
 - change name "checkGlobals"
 - pooling threads only when they exist
-- adding locks to all operations
 
 - reusing socket errors can happen - handle by trying new socket, and pass error as last resort
 - multiple uv loop threads
 
-Questions:
-
 Information:
 
 - Curl multi handle automatically reuses connections. Source: https://everything.curl.dev/libcurl/connectionreuse
+- Keepalive for http is set to 118 seconds by default by CURL Source: https://stackoverflow.com/questions/60141625/libcurl-how-does-connection-keep-alive-work
 
 */
 
@@ -484,19 +482,6 @@ CURLcode *AsynchronousDownloader::asynchPerformWithCallback(CURL* handle, bool *
 
   return code;
 }
-
-size_t writeToString(void *contents, size_t size, size_t nmemb, std::string *dst)
-{
-  // std::cout << "writeToString\n";
-  char *conts = (char *)contents;
-  for (int i = 0; i < nmemb; i++)
-  {
-    (*dst) += *(conts++);
-  }
-  return size * nmemb;
-}
-
-
 
 void asyncUVHandleCallback(uv_async_t *handle)
 {

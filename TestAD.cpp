@@ -8,6 +8,17 @@
 g++ -std=c++11 TestAD.cpp AsynchronousDownloader.cpp benchmark.cpp -lpthread -lcurl -luv -o TestAD && ./TestAD
 */
 
+size_t writeToString(void *contents, size_t size, size_t nmemb, std::string *dst)
+{
+  // std::cout << "writeToString\n";
+  char *conts = (char *)contents;
+  for (int i = 0; i < nmemb; i++)
+  {
+    (*dst) += *(conts++);
+  }
+  return size * nmemb;
+}
+
 void cleanAllHandles(std::vector<CURL*> handles)
 {
   for(auto handle : handles)
@@ -22,7 +33,6 @@ void setHandleOptions(CURL* handle, std::string* dst, std::string* headers, std:
   curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
   curl_easy_setopt(handle, CURLOPT_WRITEDATA, dst);
   curl_easy_setopt(handle, CURLOPT_URL, path->c_str());
-  // curl_easy_perform(handle);
 }
 
 std::vector<std::string> createPathsFromCS()
@@ -106,6 +116,7 @@ void blockingBatchTest(int pathLimit = 0)
     }
   }
 
+  // Clean handles and print time
   cleanAllHandles(handles2);
   auto end2 = std::chrono::system_clock::now();
   auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
@@ -118,17 +129,20 @@ void blockingBatchTest(int pathLimit = 0)
 
 void asynchBatchTest(int pathLimit = 0)
 {
+  // Preparing urls and objects to write into
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
   std::vector<std::string*> headers;
   std::unordered_map<std::string, std::string> urlETagMap;
   
+  // Preparing downloader
   AsynchronousDownloader AD;
   AD.init();
   std::thread t(&AsynchronousDownloader::asynchLoop, &AD);
 
   auto start = std::chrono::system_clock::now();
 
+  // Preparing handles
   std::vector<CURL*> handles;
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     handles.push_back(curl_easy_init());
@@ -137,14 +151,16 @@ void asynchBatchTest(int pathLimit = 0)
     setHandleOptions(handles.back(), results.back(), headers.back(), &paths[i]);
   }
 
+  // Performing requests
   bool requestFinished = false;
   AD.batchAsynchPerform(handles, &requestFinished);
-
   while (!requestFinished) sleep(0.05);
 
+  // Cleanup and print time
   cleanAllHandles(handles);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
@@ -175,6 +191,7 @@ void asynchBatchTest(int pathLimit = 0)
   while (!requestFinished2) sleep(0.001);
   cleanAllHandles(handles2);
 
+  // Checking if objects did not change
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     long code;
     curl_easy_getinfo(handles2[i], CURLINFO_RESPONSE_CODE, &code);
@@ -199,9 +216,9 @@ void linearTest(int pathLimit = 0)
   std::vector<std::string*> headers;
   std::unordered_map<std::string, std::string> urlETagMap;
 
+  auto start = std::chrono::system_clock::now();
   CURL *handle = curl_easy_init();
   curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
-  auto start = std::chrono::system_clock::now();
 
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     results.push_back(new std::string());
@@ -212,6 +229,7 @@ void linearTest(int pathLimit = 0)
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
@@ -314,9 +332,9 @@ int main()
   int testSize = 0;
 
   if (testSize != 0)
-    std::cout << "-------------- Testing for " << testSize << " objects. -----------\n";
+    std::cout << "-------------- Testing for " << testSize << " objects with " << AsynchronousDownloader::maxHandlesInUse << " parallel connections. -----------\n";
   else
-    std::cout << "-------------- Testing for all objects. -----------\n";
+    std::cout << "-------------- Testing for all objects with " << AsynchronousDownloader::maxHandlesInUse << " parallel connections. -----------\n";
 
   blockingBatchTest(testSize);
   asynchBatchTest(testSize);

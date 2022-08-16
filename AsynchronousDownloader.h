@@ -18,9 +18,6 @@
 #ifndef ASYNCHRONOUSDOWNLOADER_H_
 #define ASYNCHRONOUSDOWNLOADER_H_
 
-void checkDownloadTasks(uv_timer_t *handle);
-void timerCallback(uv_timer_t *handle);
-void on_timeout(uv_timer_t *req);
 void curl_perform(uv_poll_t *req, int status, int events);
 void checkGlobals(uv_timer_t *handle);
 size_t writeToString(void *contents, size_t size, size_t nmemb, std::string *dst);
@@ -29,9 +26,8 @@ std::string extractETAG(std::string headers);
 class AsynchronousDownloader
 {
 public:
-  uint64_t curlBuffer = 800; // miliseconds durning which handle will be left open after last call
   int handlesInUse = 0;
-  int maxHandlesInUse = 30;
+  static int const maxHandlesInUse = 20; // static and constant just for testing
 
 
   bool closeLoop = false;
