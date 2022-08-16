@@ -66,10 +66,33 @@ AsynchronousDownloader::AsynchronousDownloader()
   loopThread = new std::thread(&AsynchronousDownloader::asynchLoop, this);
 }
 
+void onUVClose(uv_handle_t* handle)
+{
+  if (handle != NULL)
+  {
+    delete handle;
+  }
+}
+
+void closeHandles(uv_handle_t* handle, void* arg)
+{
+  if (!uv_is_closing(handle))
+    uv_close(handle, onUVClose);
+}
+
 AsynchronousDownloader::~AsynchronousDownloader()
 {
+  // Close async thread
   closeLoop = true;
   loopThread->join();
+
+  // Close and if any handles are running then signal to close and run loop once to close them
+  // This may take more then one iteration of loop - hence the "while"
+  while (UV_EBUSY == uv_loop_close(loop)) {
+    closeLoop = false;
+    uv_walk(loop, closeHandles, NULL);
+    uv_run(loop, UV_RUN_ONCE);
+  }
 }
 
 void onTimeout(uv_timer_t *req)
