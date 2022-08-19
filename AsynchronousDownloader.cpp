@@ -14,6 +14,9 @@
 #include <chrono>   // time measurement
 #include <unistd.h> // time measurement
 
+#include <sys/types.h> /* See NOTES */
+#include <sys/socket.h>
+
 #include "AsynchronousDownloader.h"
 #include "benchmark.h"
 
@@ -43,6 +46,22 @@ Information:
 
 */
 
+std::chrono::_V2::system_clock::time_point starterino;
+
+curl_socket_t closeSocketCB(void *clientp, curl_socket_t item)
+{
+  std::cout << "Closing socket " << item << "\n";
+  close(item);
+  return item;
+}
+
+curl_socket_t openSocketCB(void *clientp, curlsocktype purpose, struct curl_sockaddr *address)
+{
+  auto st = socket(address->family, address->socktype, address->protocol);
+  std::cout << "Opening socket " << st << "\n";
+  return st;
+}
+
 AsynchronousDownloader::AsynchronousDownloader()
 {
   // Preparing loop timer
@@ -60,6 +79,12 @@ AsynchronousDownloader::AsynchronousDownloader()
   curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETDATA, socketData);
   curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERFUNCTION, startTimeout);
   curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERDATA, timeout);
+
+  curl_multi_setopt(curlMultiHandle, CURLMOPT_MAX_TOTAL_CONNECTIONS, 1);
+  curl_multi_setopt(curlMultiHandle, CURLMOPT_MAX_HOST_CONNECTIONS, 1);
+  curl_multi_setopt(curlMultiHandle, CURLMOPT_MAX_CONCURRENT_STREAMS, 1);
+  curl_multi_setopt(curlMultiHandle, CURLMOPT_MAXCONNECTS, 1);
+  
 
   // Preparing queue checking timer
   auto timerCheckQueueHandle = new uv_timer_t();
@@ -409,6 +434,8 @@ std::vector<CURLcode*> AsynchronousDownloader::batchBlockingPerform(std::vector<
     data->batchRequest = true;
     data->requestsLeft = &requestsLeft;
 
+    curl_easy_setopt(handleVector[i], CURLOPT_OPENSOCKETFUNCTION, openSocketCB);
+    curl_easy_setopt(handleVector[i], CURLOPT_CLOSESOCKETFUNCTION, closeSocketCB);
     curl_easy_setopt(handleVector[i], CURLOPT_PRIVATE, data);
     handlesToBeAdded.push_back(handleVector[i]); // protected before and after for
   }

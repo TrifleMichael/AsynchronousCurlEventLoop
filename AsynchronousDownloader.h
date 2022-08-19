@@ -27,7 +27,7 @@ class AsynchronousDownloader
 {
 public:
   int handlesInUse = 0;
-  static int const maxHandlesInUse = 5; // static and constant just for testing
+  static int const maxHandlesInUse = 1; // static and constant just for testing
 
   bool closeLoop = false;
   uv_loop_t loop;
@@ -42,7 +42,7 @@ public:
   typedef struct curl_context_s
   {
     uv_poll_t poll_handle;
-    curl_socket_t sockfd;
+    curl_socket_t sockfd = -1;
     AsynchronousDownloader *objPtr = nullptr;
   } curl_context_t;
 

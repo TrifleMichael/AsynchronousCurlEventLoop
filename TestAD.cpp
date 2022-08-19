@@ -63,7 +63,6 @@ void blockingBatchTest(int pathLimit = 0)
   AsynchronousDownloader AD;
 
   auto start = std::chrono::system_clock::now();
-
   std::vector<CURL*> handles;
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     handles.push_back(curl_easy_init());
@@ -74,6 +73,7 @@ void blockingBatchTest(int pathLimit = 0)
 
   // Downloading objects
   AD.batchBlockingPerform(handles);
+
   cleanAllHandles(handles);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -104,6 +104,7 @@ void blockingBatchTest(int pathLimit = 0)
   // Checking objects validity
 
   AD.batchBlockingPerform(handles2);
+
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     long code;
     curl_easy_getinfo(handles2[i], CURLINFO_RESPONSE_CODE, &code);
@@ -317,7 +318,7 @@ int main()
     return 1;
   }
 
-  int testSize = 100;
+  int testSize = 0;
 
   if (testSize != 0)
     std::cout << "-------------- Testing for " << testSize << " objects with " << AsynchronousDownloader::maxHandlesInUse << " parallel connections. -----------\n";
@@ -325,9 +326,9 @@ int main()
     std::cout << "-------------- Testing for all objects with " << AsynchronousDownloader::maxHandlesInUse << " parallel connections. -----------\n";
 
   blockingBatchTest(testSize);
-  asynchBatchTest(testSize);
-  linearTest(testSize);
-  linearTestNoReuse(testSize);
+  // asynchBatchTest(testSize);
+  // linearTest(testSize);
+  // linearTestNoReuse(testSize);
 
   curl_global_cleanup();
 
