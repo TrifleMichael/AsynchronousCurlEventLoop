@@ -8,6 +8,8 @@
 #include <unistd.h> // time measurement
 #include <unordered_map>
 
+#include <uv.h>
+
 /*
 g++ -std=c++11 socketTest.cpp -lpthread -lcurl -luv -o socketTest && ./socketTest
 */
@@ -27,7 +29,7 @@ struct Event {
 
 struct Event* createEvent(curl_socket_t socket)
 {
-  // std::cout << "Created event\n";
+  // std::cout << "createEvent\n";
   auto event = new struct Event();
   event->sockfd = socket;
   event->id = counter;
@@ -166,7 +168,7 @@ std::vector<std::string*> createEtagsFromCS()
 
 size_t writeToString2(void *contents, size_t size, size_t nmemb, std::string *dst)
 {
-  // std::cout << "Write called\n";
+  // std::cout << "writeToString2\n";
   char *conts = (char *)contents;
   for (int i = 0; i < nmemb; i++)
   {
@@ -177,6 +179,7 @@ size_t writeToString2(void *contents, size_t size, size_t nmemb, std::string *ds
 
 CURL* createHandle(std::string url, std::string* dst, std::string* headerDst)
 {
+  // std::cout << "createHandle\n";
   CURL *handle = curl_easy_init();
   curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
   curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString2);
@@ -189,6 +192,7 @@ CURL* createHandle(std::string url, std::string* dst, std::string* headerDst)
 }
 
 void cleanHandles(std::vector<CURL*> handles) {
+  // std::cout << "cleanHandles\n";
   for(auto handle : handles) {
     curl_easy_cleanup(handle);
   }
@@ -196,6 +200,7 @@ void cleanHandles(std::vector<CURL*> handles) {
 
 std::string extractETAG(std::string headers)
 {
+  // std::cout << "extractETAG\n";
   auto etagLine = headers.find("ETag");
   auto etagStart = headers.find("\"", etagLine)+1;
   auto etagEnd = headers.find("\"", etagStart+1);
@@ -204,6 +209,7 @@ std::string extractETAG(std::string headers)
 
 void fakeLoop()
 {
+  // std::cout << "fakeLoop\n";
   int runningHandles;
   curl_multi_socket_action(multiHandle, CURL_SOCKET_TIMEOUT, 0, &runningHandles);
 
@@ -219,15 +225,81 @@ void fakeLoop()
   }
 }
 
-void testDownload(int TEST_SIZE, bool sequential)
+/*
+    ------ UV LOOP ---------
+*/
+
+bool uvQuit = false;
+
+void onUVClose(uv_handle_t* handle)
 {
+  // std::cout << "onUVClose\n";
+  if (handle != NULL)
+  {
+    delete handle;
+  }
+}
 
+void fakeLoopUV(uv_prepare_t *handle)
+{
+  // std::cout << "fakeLoopUV\n";
+  int runningHandles;
+  curl_multi_socket_action(multiHandle, CURL_SOCKET_TIMEOUT, 0, &runningHandles);
 
+  while(eventMap.size() != 0) {
+    for(auto pair : eventMap) {
+      curl_perform(pair.second);
+      if (refreshMapRead) {
+        refreshMapRead = false;
+        break;
+      }
+    }
+    curl_multi_socket_action(multiHandle, CURL_SOCKET_TIMEOUT, 0, &runningHandles);
+  }
+  uvQuit = true;
+  // auto loop = (uv_loop_t*)handle->data;
+  uv_close((uv_handle_t*)handle, onUVClose);
+}
+
+void uvLoop()
+{
+  // std::cout << "uvLoop\n";
+  uv_loop_t loop;
+  uv_loop_init(&loop);
+
+  auto checkQuitSignal = new uv_prepare_t();
+
+  auto runFakeLoop = new uv_prepare_t();
+  runFakeLoop->data = &loop;
+  uv_prepare_init(&loop, runFakeLoop);
+  uv_prepare_start(runFakeLoop, fakeLoopUV);
+
+  uv_run(&loop, UV_RUN_DEFAULT);
+}
+
+void initializeMultiHandle(int MAX_CONNECTIONS)
+{
+  // std::cout << "initializeMultiHandle\n";
   multiHandle = curl_multi_init();
   curl_multi_setopt(multiHandle, CURLMOPT_SOCKETFUNCTION, socketCB);
   curl_multi_setopt(multiHandle, CURLMOPT_SOCKETDATA, multiHandle);
-  curl_multi_setopt(multiHandle, CURLMOPT_MAX_TOTAL_CONNECTIONS, 1);
+  curl_multi_setopt(multiHandle, CURLMOPT_MAX_TOTAL_CONNECTIONS, MAX_CONNECTIONS);
+}
 
+curl_socket_t openSocketFunction(void *clientp, curlsocktype purpose, struct curl_sockaddr *address)
+{
+  // std::cout << "Opening socket\n";
+  return socket(address->family, address->socktype, address->protocol);
+}
+
+/*
+    ------ BENCHMARKS ---------
+*/
+
+void testDownload(int TEST_SIZE, bool sequential, int MAX_CONNECTIONS, bool uv)
+{
+
+  initializeMultiHandle(MAX_CONNECTIONS);
   auto paths = createPathsFromCS();
   // std::cout << *paths[0] << "\n";
   std::vector<std::string *> results;
@@ -241,14 +313,24 @@ void testDownload(int TEST_SIZE, bool sequential)
     results.push_back(new std::string());
     headers.push_back(new std::string());
     handles.push_back(createHandle(*paths[i], results.back(), headers.back()));
+    curl_easy_setopt(handles.back(), CURLOPT_OPENSOCKETFUNCTION, openSocketFunction); 
     curl_multi_add_handle(multiHandle, handles.back());
     if (sequential) {
-      fakeLoop();
+      if (uv) {
+        uvLoop();
+      } else {
+        fakeLoop();
+      }
     }
   }
 
-  if (!sequential) {
-    fakeLoop();
+  if (!sequential)
+  {
+    if (uv) {
+      uvLoop();
+    } else {
+      fakeLoop();
+    }
   }
 
   auto end = std::chrono::system_clock::now();
@@ -266,14 +348,10 @@ void testDownload(int TEST_SIZE, bool sequential)
   curl_multi_cleanup(multiHandle);
 }
 
-int64_t testValidate(int TEST_SIZE, bool sequential)
+int64_t testValidate(int TEST_SIZE, bool sequential, int MAX_CONNECTIONS, bool uv)
 {
 
-
-  multiHandle = curl_multi_init();
-  curl_multi_setopt(multiHandle, CURLMOPT_SOCKETFUNCTION, socketCB);
-  curl_multi_setopt(multiHandle, CURLMOPT_SOCKETDATA, multiHandle);
-  curl_multi_setopt(multiHandle, CURLMOPT_MAX_TOTAL_CONNECTIONS, 1);
+  initializeMultiHandle(MAX_CONNECTIONS);
 
   auto paths = createPathsFromCS();
   auto etags = createEtagsFromCS();
@@ -284,7 +362,8 @@ int64_t testValidate(int TEST_SIZE, bool sequential)
   std::vector<CURL*> handles2;
   for(int i = 0; i < TEST_SIZE; i++) {
     results2.push_back(new std::string());
-    handles2.push_back(createHandle(*paths[i], results2.back(), nullptr));    
+    handles2.push_back(createHandle(*paths[i], results2.back(), nullptr));
+    curl_easy_setopt(handles2.back(), CURLOPT_OPENSOCKETFUNCTION, openSocketFunction);  
 
     std::string etagHeader = "If-None-Match: \"" + *etags[i] + "\"";
     struct curl_slist *curlHeaders = nullptr;
@@ -293,12 +372,20 @@ int64_t testValidate(int TEST_SIZE, bool sequential)
 
     curl_multi_add_handle(multiHandle, handles2.back());
     if (sequential) {
-      fakeLoop();
+      if (uv) {
+        uvLoop();
+      } else {
+        fakeLoop();
+      }
     }
   }
 
   if (!sequential) {
-    fakeLoop();
+    if (uv) {
+      uvLoop();
+    } else {
+      fakeLoop();
+    }
   }
 
   auto end2 = std::chrono::system_clock::now();
@@ -334,23 +421,43 @@ int main()
 
 
   int PATH_SIZE = 495;
-  int REPEATS = 50;
-  bool sequential = true;
+  int REPEATS = 2;
+  int MAX_CONNECTIONS = 5;
+  bool sequential = false;
+  bool useLibUV = true;
 
 
-  // testDownload(PATH_SIZE, sequential);
+  // testDownload(PATH_SIZE, sequential, MAX_CONNECTIONS, useLibUV);
 
   int64_t totalTime = 0;
   for(int i = 0; i < REPEATS; i++) {
-    totalTime += testValidate(PATH_SIZE, sequential);
+    totalTime += testValidate(PATH_SIZE, sequential, MAX_CONNECTIONS, useLibUV);
   }
   std::cout << "Average validate time = " << totalTime/REPEATS << "ms\n";
+  std::cout << "Average time * connections " << MAX_CONNECTIONS*(totalTime/REPEATS) << "\n";
 
+
+
+  curl_global_cleanup();
+}
+
+
+// Printing ETags
   // std::cout << "\n\n\n\n\n\n\n\n\n\n\n\n";
   // auto paths = createPathsFromCS();
   // for(auto path : paths) {
   //   std::cout << urlEtagMap[*path] << ",";
   // }
 
-  curl_global_cleanup();
-}
+// Testing optimal number of parallel connections
+  // for (int j = 1; j < 50; j++)
+  // {
+  //   int64_t totalTime = 0;
+  //   for (int i = 0; i < REPEATS; i++)
+  //   {
+  //     totalTime += testValidate(PATH_SIZE, sequential, j);
+  //   }
+  //   std::cout << "Average validate time = " << totalTime / REPEATS << "ms\n";
+  //   std::cout << "Average time * connections " << j * (totalTime / REPEATS) << "\n";
+  //   std::cout << "J " << j << "\n-------------------------------\n";
+  // }
