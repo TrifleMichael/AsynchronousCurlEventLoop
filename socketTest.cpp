@@ -17,25 +17,39 @@ g++ -std=c++11 socketTest.cpp -lpthread -lcurl -luv -o socketTest && ./socketTes
 CURLM* multiHandle;
 int counter = 0;
 std::unordered_map<std::string, std::string> urlEtagMap;
-uv_loop_t *uvMainLoop;
+uv_loop_t *uvMainLoop = nullptr;
 
-
-struct Event {
-  int bitmask;
-  uv_poll_t *pollHandle;
+struct curl_context_s
+{
+  uv_poll_t poll_handle;
   curl_socket_t sockfd;
-  int id;
 };
 
-struct Event* createEvent(curl_socket_t socket)
+void curlCloseCB(uv_handle_t *handle)
 {
-  // std::cout << "createEvent\n";
-  auto event = new struct Event();
-  event->sockfd = socket;
-  event->id = counter;
-  event->pollHandle->data = event;
-  uv_poll_init(uvMainLoop, event->pollHandle, socket);
-  return event;
+  // std::cout << "curlCloseCB\n";
+  struct curl_context_s *context = (struct curl_context_s *)handle->data;
+  free(context);
+}
+
+void destroyCurlContext(struct curl_context_s *context)
+{
+  // std::cout << "destroyCurlContext\n";
+  uv_close((uv_handle_t *)&context->poll_handle, curlCloseCB);
+}
+
+struct curl_context_s* createContext(curl_socket_t sockfd)
+{
+  // std::cout << "createCurlContext\n";
+  struct curl_context_s *context;
+
+  context = (struct curl_context_s *)malloc(sizeof(*context));
+  context->sockfd = sockfd;
+
+  uv_poll_init_socket(uvMainLoop, &context->poll_handle, sockfd);
+  context->poll_handle.data = context;
+
+  return context;
 }
 
 int doneRequests = 0;
@@ -97,7 +111,7 @@ void curl_perform(uv_poll_t *req, int status, int events)
   if (events & UV_WRITABLE)
     flags |= CURL_CSELECT_OUT;
 
-  auto event = (struct Event*)req->data;
+  auto event = (struct curl_context_s *)req->data;
   curl_multi_socket_action(multiHandle, event->sockfd, flags,
                            &running_handles);
   checkMultiInfo();
@@ -110,44 +124,34 @@ void socketCB(CURL *easy,      /* easy handle */
                     void *socketp)  /* private socket pointer */
 {
   // std::cout << "socketCB\n";
-  CURLM* multiHandle = (CURLM*)userp;
+  struct curl_context_s *curl_context;
+  int events = 0;
+
   switch (what)
   {
   case CURL_POLL_IN:
   case CURL_POLL_OUT:
   case CURL_POLL_INOUT:
-  {
-    struct Event *event;
-    event = socketp ? (struct Event *)socketp : createEvent(s);
-    // curl_easy_getinfo(handle, CURLINFO_PRIVATE, &event);
-  
-    event->bitmask = what;
-    // event->sockfd = s;
+    curl_context = socketp ? (struct curl_context_s *)socketp : createContext(s);
+    curl_multi_assign(multiHandle, s, (void *)curl_context);
 
-    // std::cout << "---\n";
-    // if (what & CURL_POLL_IN) std::cout << "IN\n";
-    // if (what & CURL_POLL_OUT) std::cout << "OUT\n";
-
-    int events = 0;
     if (what != CURL_POLL_IN)
       events |= UV_WRITABLE;
     if (what != CURL_POLL_OUT)
       events |= UV_READABLE;
 
-    curl_multi_assign(multiHandle, s, event);
-    std::cout << "This cout segment faults\n";
-    uv_poll_start(event->pollHandle, events, curl_perform);
+    uv_poll_start(&curl_context->poll_handle, events, curl_perform);
     break;
-  }
   case CURL_POLL_REMOVE:
-    curl_multi_assign(multiHandle, s, nullptr);
     if (socketp)
     {
-      auto event = (struct Event*)socketp;
+      uv_poll_stop(&((curl_context_s *)socketp)->poll_handle);
+      destroyCurlContext((curl_context_s *)socketp);
+      curl_multi_assign(multiHandle, s, NULL);
     }
     break;
   default:
-    break;
+    abort();
   }
 }
 
@@ -269,19 +273,30 @@ int startTimeout(CURLM *multi, long timeout_ms, void *userp)
   return 0;
 }
 
+void checkCB(uv_prepare_t *handle)
+{
+  // std::cout << "checkCB\n";
+  int running_handles;
+  curl_multi_socket_action(multiHandle, CURL_SOCKET_TIMEOUT, 0, &running_handles);
+  uv_prepare_stop(handle);
+  // uv_close((uv_handle_t*)handle, onUVClose);
+}
+
 void uvLoop()
 {
   // std::cout << "uvLoop\n";
-  uvMainLoop = (uv_loop_t*)malloc(sizeof(uv_loop_t));
-  uv_loop_init(uvMainLoop);
+  uvMainLoop = uv_default_loop();
 
   uv_timer_t timeout;
   uv_timer_init(uvMainLoop, &timeout);
   curl_multi_setopt(multiHandle, CURLMOPT_TIMERFUNCTION, startTimeout);
   curl_multi_setopt(multiHandle, CURLMOPT_TIMERDATA, &timeout);
 
+  uv_prepare_t kickstart;
+  uv_prepare_init(uvMainLoop, &kickstart);
+  uv_prepare_start(&kickstart, checkCB);
+
   uv_run(uvMainLoop, UV_RUN_DEFAULT);
-  std::cout << "RUN ENDED\n";
 }
 
 void initializeMultiHandle(int MAX_CONNECTIONS)
@@ -397,7 +412,6 @@ int64_t testValidate(int TEST_SIZE, bool sequential, int MAX_CONNECTIONS, bool u
       std::cout << "INVALID CODE: " << code << "\n";
     }
   }
-
   cleanHandles(handles2);
   auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
 
@@ -418,9 +432,9 @@ int main()
   }
 
 
-  int PATH_SIZE = 3;
+  int PATH_SIZE = 495;
   int REPEATS = 1;
-  int MAX_CONNECTIONS = 1;
+  int MAX_CONNECTIONS = 5;
   bool sequential = false;
   bool useLibUV = true;
 
