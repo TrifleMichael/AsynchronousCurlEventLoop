@@ -261,13 +261,43 @@ void fakeLoopUV(uv_prepare_t *handle)
   uv_close((uv_handle_t*)handle, onUVClose);
 }
 
+void onTimeout(uv_timer_t *req)
+{
+  int running_handles;
+  curl_multi_socket_action(multiHandle, CURL_SOCKET_TIMEOUT, 0,
+                           &running_handles);
+  checkMultiInfo();
+}
+
+int startTimeout(CURLM *multi, long timeout_ms, void *userp)
+{
+  // std::cout << "startTimeout\n";
+  auto timeout = (uv_timer_t *)userp;
+
+  if (timeout_ms < 0)
+  {
+    uv_timer_stop(timeout);
+  }
+  else
+  {
+    if (timeout_ms == 0)
+      timeout_ms = 1; /* 0 means directly call socket_action, but we will do it
+                        in a bit */
+    uv_timer_start(timeout, onTimeout, timeout_ms, 0);
+  }
+  return 0;
+}
+
 void uvLoop()
 {
   // std::cout << "uvLoop\n";
   uv_loop_t loop;
   uv_loop_init(&loop);
 
-  auto checkQuitSignal = new uv_prepare_t();
+  uv_timer_t timeout;
+  uv_timer_init(&loop, &timeout);
+  curl_multi_setopt(multiHandle, CURLMOPT_TIMERFUNCTION, startTimeout);
+  curl_multi_setopt(multiHandle, CURLMOPT_TIMERDATA, &timeout);
 
   auto runFakeLoop = new uv_prepare_t();
   runFakeLoop->data = &loop;
@@ -421,8 +451,8 @@ int main()
 
 
   int PATH_SIZE = 495;
-  int REPEATS = 2;
-  int MAX_CONNECTIONS = 5;
+  int REPEATS = 10;
+  int MAX_CONNECTIONS = 1;
   bool sequential = false;
   bool useLibUV = true;
 
