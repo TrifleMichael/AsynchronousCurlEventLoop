@@ -16,13 +16,13 @@ g++ -std=c++11 socketTest.cpp -lpthread -lcurl -luv -o socketTest && ./socketTes
 
 CURLM* multiHandle;
 int counter = 0;
-std::unordered_map<int, struct Event*> eventMap;
-bool refreshMapRead = false;
 std::unordered_map<std::string, std::string> urlEtagMap;
+uv_loop_t *uvMainLoop;
 
 
 struct Event {
   int bitmask;
+  uv_poll_t *pollHandle;
   curl_socket_t sockfd;
   int id;
 };
@@ -33,49 +33,9 @@ struct Event* createEvent(curl_socket_t socket)
   auto event = new struct Event();
   event->sockfd = socket;
   event->id = counter;
-  eventMap[counter++] = event;
+  event->pollHandle->data = event;
+  uv_poll_init(uvMainLoop, event->pollHandle, socket);
   return event;
-}
-
-void socketCB(CURL *easy,      /* easy handle */
-                    curl_socket_t s, /* socket */
-                    int what,        /* describes the socket */
-                    void *userp,     /* private callback pointer */
-                    void *socketp)  /* private socket pointer */
-{
-  // std::cout << "socketCB\n";
-  CURLM* multiHandle = (CURLM*)userp;
-  switch (what)
-  {
-  case CURL_POLL_IN:
-  case CURL_POLL_OUT:
-  case CURL_POLL_INOUT:
-  {
-    struct Event *event;
-    event = socketp ? (struct Event *)socketp : createEvent(s);
-    // curl_easy_getinfo(handle, CURLINFO_PRIVATE, &event);
-  
-    event->bitmask = what;
-    // event->sockfd = s;
-
-    // std::cout << "---\n";
-    // if (what & CURL_POLL_IN) std::cout << "IN\n";
-    // if (what & CURL_POLL_OUT) std::cout << "OUT\n";
-    curl_multi_assign(multiHandle, s, event);
-    break;
-  }
-  case CURL_POLL_REMOVE:
-    curl_multi_assign(multiHandle, s, nullptr);
-    if (socketp)
-    {
-      auto event = (struct Event*)socketp;
-      eventMap.erase(event->id); // should free memory
-      refreshMapRead = true;
-    }
-    break;
-  default:
-    break;
-  }
 }
 
 int doneRequests = 0;
@@ -126,12 +86,69 @@ void checkMultiInfo()
   }
 }
 
-void curl_perform(struct Event* event)
+void curl_perform(uv_poll_t *req, int status, int events)
 {
   // std::cout << "curl_perform\n";
-  int running_handles;  
-  curl_multi_socket_action(multiHandle, event->sockfd, event->bitmask, &running_handles);
+
+  int running_handles;
+  int flags = 0;
+  if (events & UV_READABLE)
+    flags |= CURL_CSELECT_IN;
+  if (events & UV_WRITABLE)
+    flags |= CURL_CSELECT_OUT;
+
+  auto event = (struct Event*)req->data;
+  curl_multi_socket_action(multiHandle, event->sockfd, flags,
+                           &running_handles);
   checkMultiInfo();
+}
+
+void socketCB(CURL *easy,      /* easy handle */
+                    curl_socket_t s, /* socket */
+                    int what,        /* describes the socket */
+                    void *userp,     /* private callback pointer */
+                    void *socketp)  /* private socket pointer */
+{
+  // std::cout << "socketCB\n";
+  CURLM* multiHandle = (CURLM*)userp;
+  switch (what)
+  {
+  case CURL_POLL_IN:
+  case CURL_POLL_OUT:
+  case CURL_POLL_INOUT:
+  {
+    struct Event *event;
+    event = socketp ? (struct Event *)socketp : createEvent(s);
+    // curl_easy_getinfo(handle, CURLINFO_PRIVATE, &event);
+  
+    event->bitmask = what;
+    // event->sockfd = s;
+
+    // std::cout << "---\n";
+    // if (what & CURL_POLL_IN) std::cout << "IN\n";
+    // if (what & CURL_POLL_OUT) std::cout << "OUT\n";
+
+    int events = 0;
+    if (what != CURL_POLL_IN)
+      events |= UV_WRITABLE;
+    if (what != CURL_POLL_OUT)
+      events |= UV_READABLE;
+
+    curl_multi_assign(multiHandle, s, event);
+    std::cout << "This cout segment faults\n";
+    uv_poll_start(event->pollHandle, events, curl_perform);
+    break;
+  }
+  case CURL_POLL_REMOVE:
+    curl_multi_assign(multiHandle, s, nullptr);
+    if (socketp)
+    {
+      auto event = (struct Event*)socketp;
+    }
+    break;
+  default:
+    break;
+  }
 }
 
 std::vector<std::string*> createPathsFromCS()
@@ -207,23 +224,7 @@ std::string extractETAG(std::string headers)
   return headers.substr(etagStart, etagEnd - etagStart);
 }
 
-void fakeLoop()
-{
-  // std::cout << "fakeLoop\n";
-  int runningHandles;
-  curl_multi_socket_action(multiHandle, CURL_SOCKET_TIMEOUT, 0, &runningHandles);
 
-  while(eventMap.size() != 0) {
-    for(auto pair : eventMap) {
-      curl_perform(pair.second);
-      if (refreshMapRead) {
-        refreshMapRead = false;
-        break;
-      }
-    }
-    curl_multi_socket_action(multiHandle, CURL_SOCKET_TIMEOUT, 0, &runningHandles);
-  }
-}
 
 /*
     ------ UV LOOP ---------
@@ -240,29 +241,9 @@ void onUVClose(uv_handle_t* handle)
   }
 }
 
-void fakeLoopUV(uv_prepare_t *handle)
-{
-  // std::cout << "fakeLoopUV\n";
-  int runningHandles;
-  curl_multi_socket_action(multiHandle, CURL_SOCKET_TIMEOUT, 0, &runningHandles);
-
-  while(eventMap.size() != 0) {
-    for(auto pair : eventMap) {
-      curl_perform(pair.second);
-      if (refreshMapRead) {
-        refreshMapRead = false;
-        break;
-      }
-    }
-    curl_multi_socket_action(multiHandle, CURL_SOCKET_TIMEOUT, 0, &runningHandles);
-  }
-  uvQuit = true;
-  // auto loop = (uv_loop_t*)handle->data;
-  uv_close((uv_handle_t*)handle, onUVClose);
-}
-
 void onTimeout(uv_timer_t *req)
 {
+  // std::cout << "onTimeout\n";
   int running_handles;
   curl_multi_socket_action(multiHandle, CURL_SOCKET_TIMEOUT, 0,
                            &running_handles);
@@ -291,20 +272,16 @@ int startTimeout(CURLM *multi, long timeout_ms, void *userp)
 void uvLoop()
 {
   // std::cout << "uvLoop\n";
-  uv_loop_t loop;
-  uv_loop_init(&loop);
+  uvMainLoop = (uv_loop_t*)malloc(sizeof(uv_loop_t));
+  uv_loop_init(uvMainLoop);
 
   uv_timer_t timeout;
-  uv_timer_init(&loop, &timeout);
+  uv_timer_init(uvMainLoop, &timeout);
   curl_multi_setopt(multiHandle, CURLMOPT_TIMERFUNCTION, startTimeout);
   curl_multi_setopt(multiHandle, CURLMOPT_TIMERDATA, &timeout);
 
-  auto runFakeLoop = new uv_prepare_t();
-  runFakeLoop->data = &loop;
-  uv_prepare_init(&loop, runFakeLoop);
-  uv_prepare_start(runFakeLoop, fakeLoopUV);
-
-  uv_run(&loop, UV_RUN_DEFAULT);
+  uv_run(uvMainLoop, UV_RUN_DEFAULT);
+  std::cout << "RUN ENDED\n";
 }
 
 void initializeMultiHandle(int MAX_CONNECTIONS)
@@ -328,7 +305,6 @@ curl_socket_t openSocketFunction(void *clientp, curlsocktype purpose, struct cur
 
 void testDownload(int TEST_SIZE, bool sequential, int MAX_CONNECTIONS, bool uv)
 {
-
   initializeMultiHandle(MAX_CONNECTIONS);
   auto paths = createPathsFromCS();
   // std::cout << *paths[0] << "\n";
@@ -348,8 +324,6 @@ void testDownload(int TEST_SIZE, bool sequential, int MAX_CONNECTIONS, bool uv)
     if (sequential) {
       if (uv) {
         uvLoop();
-      } else {
-        fakeLoop();
       }
     }
   }
@@ -358,8 +332,6 @@ void testDownload(int TEST_SIZE, bool sequential, int MAX_CONNECTIONS, bool uv)
   {
     if (uv) {
       uvLoop();
-    } else {
-      fakeLoop();
     }
   }
 
@@ -404,8 +376,6 @@ int64_t testValidate(int TEST_SIZE, bool sequential, int MAX_CONNECTIONS, bool u
     if (sequential) {
       if (uv) {
         uvLoop();
-      } else {
-        fakeLoop();
       }
     }
   }
@@ -413,8 +383,6 @@ int64_t testValidate(int TEST_SIZE, bool sequential, int MAX_CONNECTIONS, bool u
   if (!sequential) {
     if (uv) {
       uvLoop();
-    } else {
-      fakeLoop();
     }
   }
 
@@ -450,8 +418,8 @@ int main()
   }
 
 
-  int PATH_SIZE = 495;
-  int REPEATS = 10;
+  int PATH_SIZE = 3;
+  int REPEATS = 1;
   int MAX_CONNECTIONS = 1;
   bool sequential = false;
   bool useLibUV = true;
