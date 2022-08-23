@@ -70,9 +70,7 @@ std::vector<std::string*> createPaths()
   curl_easy_setopt(handle, CURLOPT_URL, "http://ccdb-test.cern.ch:8080/latest/%5Cw%7B3%7D/.*/1659949694000?Accept=application/json");
   curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString2);
   curl_easy_setopt(handle, CURLOPT_WRITEDATA, &dst);
-  std::cout << "about to perform\n";
   curl_easy_perform(handle);
-  std::cout << "performing\n";
   curl_easy_cleanup(handle);
 
   return createPathsFromMetadata(dst, "http://ccdb-test.cern.ch:8080");

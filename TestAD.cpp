@@ -317,7 +317,7 @@ int main()
     return 1;
   }
 
-  int testSize = 100;
+  int testSize = 495;
 
   if (testSize != 0)
     std::cout << "-------------- Testing for " << testSize << " objects with " << AsynchronousDownloader::maxHandlesInUse << " parallel connections. -----------\n";

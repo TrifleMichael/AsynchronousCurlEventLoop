@@ -682,6 +682,6 @@ void blockingBatchTest(int pathLimit = 0)
 
 int main()
 {
-  blockingBatchTest(0);
+  blockingBatchTest(495);
   return 0;
 }

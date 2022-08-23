@@ -27,7 +27,7 @@ class AsynchronousDownloader
 {
 public:
   int handlesInUse = 0;
-  static int const maxHandlesInUse = 5; // static and constant just for testing
+  static int const maxHandlesInUse = 1; // static and constant just for testing
 
   bool closeLoop = false;
   uv_loop_t loop;
