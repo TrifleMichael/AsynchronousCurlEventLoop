@@ -18,11 +18,13 @@ CURLM* multiHandle;
 int counter = 0;
 std::unordered_map<std::string, std::string> urlEtagMap;
 uv_loop_t *uvMainLoop = nullptr;
+int downloads;
 
 struct curl_context_s
 {
   uv_poll_t poll_handle;
   curl_socket_t sockfd;
+  int ticks = 5;
 };
 
 void curlCloseCB(uv_handle_t *handle)
@@ -38,19 +40,26 @@ void destroyCurlContext(struct curl_context_s *context)
   uv_close((uv_handle_t *)&context->poll_handle, curlCloseCB);
 }
 
+std::unordered_map<curl_socket_t, struct curl_context_s *> socketContextMap;
 struct curl_context_s* createContext(curl_socket_t sockfd)
 {
-  // std::cout << "createCurlContext\n";
-  struct curl_context_s *context;
+    // std::cout << "createCurlContext\n";
+  if (socketContextMap.find(sockfd) == socketContextMap.end()) {
+    std::cout << "Creating new context\n";
+    struct curl_context_s *context;
 
-  context = (struct curl_context_s *)malloc(sizeof(*context));
-  context->sockfd = sockfd;
+    context = (struct curl_context_s *)malloc(sizeof(*context));
+    context->sockfd = sockfd;
 
-  uv_poll_init_socket(uvMainLoop, &context->poll_handle, sockfd);
-  context->poll_handle.data = context;
+    uv_poll_init_socket(uvMainLoop, &context->poll_handle, sockfd);
+    context->poll_handle.data = context;
+    socketContextMap[sockfd] = context;
 
-  return context;
+    return context;
+  }
+  return socketContextMap[sockfd];
 }
+
 
 int doneRequests = 0;
 void checkMultiInfo()
@@ -87,6 +96,7 @@ void checkMultiInfo()
 
       // delete event;
       curl_multi_remove_handle(multiHandle, easy_handle);
+      downloads--;
       // curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, &data); 
 
       // curl_easy_getinfo(easy_handle,  CURLINFO_RESPONSE_CODE, data->codeDestination);      
@@ -145,8 +155,8 @@ void socketCB(CURL *easy,      /* easy handle */
   case CURL_POLL_REMOVE:
     if (socketp)
     {
-      uv_poll_stop(&((curl_context_s *)socketp)->poll_handle);
-      destroyCurlContext((curl_context_s *)socketp);
+      // uv_poll_stop(&((curl_context_s *)socketp)->poll_handle);
+      // destroyCurlContext((curl_context_s *)socketp);
       curl_multi_assign(multiHandle, s, NULL);
     }
     break;
@@ -239,10 +249,10 @@ bool uvQuit = false;
 void onUVClose(uv_handle_t* handle)
 {
   // std::cout << "onUVClose\n";
-  if (handle != NULL)
-  {
-    delete handle;
-  }
+  // if (handle != NULL)
+  // {
+  //   delete handle;
+  // }
 }
 
 void onTimeout(uv_timer_t *req)
@@ -282,6 +292,19 @@ void checkCB(uv_prepare_t *handle)
   // uv_close((uv_handle_t*)handle, onUVClose);
 }
 
+void closeHandles(uv_handle_t* handle, void* arg)
+{
+  if (!uv_is_closing(handle))
+    uv_close(handle, onUVClose);
+}
+
+void checkIfEndedCB(uv_prepare_t *handle)
+{
+  if (downloads == 0) {
+    uv_walk(uvMainLoop, closeHandles, NULL);
+  }
+}
+
 void uvLoop()
 {
   // std::cout << "uvLoop\n";
@@ -295,6 +318,10 @@ void uvLoop()
   uv_prepare_t kickstart;
   uv_prepare_init(uvMainLoop, &kickstart);
   uv_prepare_start(&kickstart, checkCB);
+
+  uv_prepare_t checkIfEnded;
+  uv_prepare_init(uvMainLoop, &checkIfEnded);
+  uv_prepare_start(&checkIfEnded, checkIfEndedCB);
 
   uv_run(uvMainLoop, UV_RUN_DEFAULT);
 }
@@ -320,6 +347,7 @@ curl_socket_t openSocketFunction(void *clientp, curlsocktype purpose, struct cur
 
 void testDownload(int TEST_SIZE, bool sequential, int MAX_CONNECTIONS, bool uv)
 {
+  downloads = TEST_SIZE;
   initializeMultiHandle(MAX_CONNECTIONS);
   auto paths = createPathsFromCS();
   // std::cout << *paths[0] << "\n";
@@ -367,7 +395,7 @@ void testDownload(int TEST_SIZE, bool sequential, int MAX_CONNECTIONS, bool uv)
 
 int64_t testValidate(int TEST_SIZE, bool sequential, int MAX_CONNECTIONS, bool uv)
 {
-
+  downloads = TEST_SIZE;
   initializeMultiHandle(MAX_CONNECTIONS);
 
   auto paths = createPathsFromCS();
@@ -434,7 +462,7 @@ int main()
 
   int PATH_SIZE = 495;
   int REPEATS = 1;
-  int MAX_CONNECTIONS = 5;
+  int MAX_CONNECTIONS = 1;
   bool sequential = false;
   bool useLibUV = true;
 
