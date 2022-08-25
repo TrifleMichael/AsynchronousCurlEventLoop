@@ -46,22 +46,6 @@ Information:
 
 */
 
-std::chrono::_V2::system_clock::time_point starterino;
-
-curl_socket_t closeSocketCB(void *clientp, curl_socket_t item)
-{
-  std::cout << "Closing socket " << item << "\n";
-  close(item);
-  return item;
-}
-
-curl_socket_t openSocketCB(void *clientp, curlsocktype purpose, struct curl_sockaddr *address)
-{
-  auto st = socket(address->family, address->socktype, address->protocol);
-  std::cout << "Opening socket " << st << "\n";
-  return st;
-}
-
 AsynchronousDownloader::AsynchronousDownloader()
 {
   // Preparing loop timer
@@ -271,7 +255,14 @@ void AsynchronousDownloader::checkMultiInfo(void)
         }
       }
       // curl_easy_cleanup(easy_handle);
+
+
+      // Starting scheduling new download
       checkHandleQueue();
+      int running_handles;
+      curl_multi_socket_action(curlMultiHandle, CURL_SOCKET_TIMEOUT, 0,
+                              &running_handles);
+      checkMultiInfo();
     }
     break;
 
@@ -434,8 +425,6 @@ std::vector<CURLcode*> AsynchronousDownloader::batchBlockingPerform(std::vector<
     data->batchRequest = true;
     data->requestsLeft = &requestsLeft;
 
-    curl_easy_setopt(handleVector[i], CURLOPT_OPENSOCKETFUNCTION, openSocketCB);
-    curl_easy_setopt(handleVector[i], CURLOPT_CLOSESOCKETFUNCTION, closeSocketCB);
     curl_easy_setopt(handleVector[i], CURLOPT_PRIVATE, data);
     handlesToBeAdded.push_back(handleVector[i]); // protected before and after for
   }
