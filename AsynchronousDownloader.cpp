@@ -105,20 +105,12 @@ AsynchronousDownloader::~AsynchronousDownloader()
   curl_multi_cleanup(curlMultiHandle);
 }
 
-bool timeout = false;
 void onTimeout(uv_timer_t *req)
 {
   // std::cout << "onTimeout\n";
   auto AD = (AsynchronousDownloader *)req->data;
   int running_handles;
-  if (!timeout) {
-    std::cout << "Timeout\n";
-      timeout = true;
-    auto end2 = std::chrono::system_clock::now();
-    auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - startT).count();
-    auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(startT - end2).count();
-    std::cout << "Time - " << difference << ", reverse " << difference2 <<  "ms.\n";
-  }
+
   curl_multi_socket_action(AD->curlMultiHandle, CURL_SOCKET_TIMEOUT, 0,
                            &running_handles);
   AD->checkMultiInfo();

@@ -1,10 +1,10 @@
 #include <curl/curl.h>
 #include <iostream>
-#include <chrono>
 // #include <stdlib.h>
 #include <curl/curl.h>
 #include <vector>
 #include "resources.h"
+#include <chrono>
 #include <unistd.h> // time measurement
 #include <unordered_map>
 
@@ -19,12 +19,13 @@ int counter = 0;
 std::unordered_map<std::string, std::string> urlEtagMap;
 uv_loop_t *uvMainLoop = nullptr;
 int downloads;
+std::unordered_map<curl_socket_t, struct curl_context_s *> socketContextMap;
 
 struct curl_context_s
 {
   uv_poll_t poll_handle;
   curl_socket_t sockfd;
-  int ticks = 5;
+  int action;
 };
 
 void curlCloseCB(uv_handle_t *handle)
@@ -37,27 +38,8 @@ void curlCloseCB(uv_handle_t *handle)
 void destroyCurlContext(struct curl_context_s *context)
 {
   // std::cout << "destroyCurlContext\n";
+  socketContextMap.erase(context->sockfd);
   uv_close((uv_handle_t *)&context->poll_handle, curlCloseCB);
-}
-
-std::unordered_map<curl_socket_t, struct curl_context_s *> socketContextMap;
-struct curl_context_s* createContext(curl_socket_t sockfd)
-{
-    // std::cout << "createCurlContext\n";
-  if (socketContextMap.find(sockfd) == socketContextMap.end()) {
-    std::cout << "Creating new context\n";
-    struct curl_context_s *context;
-
-    context = (struct curl_context_s *)malloc(sizeof(*context));
-    context->sockfd = sockfd;
-
-    uv_poll_init_socket(uvMainLoop, &context->poll_handle, sockfd);
-    context->poll_handle.data = context;
-    socketContextMap[sockfd] = context;
-
-    return context;
-  }
-  return socketContextMap[sockfd];
 }
 
 
@@ -112,7 +94,7 @@ void checkMultiInfo()
 
 void curl_perform(uv_poll_t *req, int status, int events)
 {
-  // std::cout << "curl_perform\n";
+  std::cout << "curl_perform\n";
 
   int running_handles;
   int flags = 0;
@@ -125,6 +107,25 @@ void curl_perform(uv_poll_t *req, int status, int events)
   curl_multi_socket_action(multiHandle, event->sockfd, flags,
                            &running_handles);
   checkMultiInfo();
+}
+
+struct curl_context_s* createContext(curl_socket_t sockfd, int events)
+{
+    // std::cout << "createCurlContext\n";
+  if (socketContextMap.find(sockfd) == socketContextMap.end()) {
+    struct curl_context_s *context;
+
+    context = (struct curl_context_s *)malloc(sizeof(*context));
+    context->sockfd = sockfd;
+    context->action = events;
+
+    uv_poll_init_socket(uvMainLoop, &context->poll_handle, sockfd);
+    context->poll_handle.data = context;
+    socketContextMap[sockfd] = context;
+
+    return context;
+  }
+  return socketContextMap[sockfd];
 }
 
 void socketCB(CURL *easy,      /* easy handle */
@@ -142,21 +143,34 @@ void socketCB(CURL *easy,      /* easy handle */
   case CURL_POLL_IN:
   case CURL_POLL_OUT:
   case CURL_POLL_INOUT:
-    curl_context = socketp ? (struct curl_context_s *)socketp : createContext(s);
-    curl_multi_assign(multiHandle, s, (void *)curl_context);
 
     if (what != CURL_POLL_IN)
       events |= UV_WRITABLE;
     if (what != CURL_POLL_OUT)
       events |= UV_READABLE;
 
+    curl_context = socketp ? (struct curl_context_s *)socketp : createContext(s, events);
+    // if(events != curl_context->action) {
+    //   curl_context->action = events;
+    //   uv_poll_start(&curl_context->poll_handle, events, curl_perform);
+    // }
+    // if (events != curl_context->action) std::cout << "Not the same!\n";
+    // if (events == curl_context->action) std::cout << "Same!\n";
+    // std::cout << &curl_context->poll_handle << " " << events << " " << curl_perform << "\n";
+    // std::cout << "Poll started " << &curl_context->poll_handle << "\n";
+    curl_multi_assign(multiHandle, s, (void *)curl_context);
+    std::cout << "Start\n";
     uv_poll_start(&curl_context->poll_handle, events, curl_perform);
+    std::cout << "End\n";
+
+    // std::cout << "Poll start\n";
     break;
   case CURL_POLL_REMOVE:
     if (socketp)
     {
-      // uv_poll_stop(&((curl_context_s *)socketp)->poll_handle);
-      // destroyCurlContext((curl_context_s *)socketp);
+      // std::cout << "Poll stopped " << &((curl_context_s *)socketp)->poll_handle << "\n";
+      uv_poll_stop(&((curl_context_s *)socketp)->poll_handle);
+      destroyCurlContext((curl_context_s *)socketp);
       curl_multi_assign(multiHandle, s, NULL);
     }
     break;
@@ -300,6 +314,7 @@ void closeHandles(uv_handle_t* handle, void* arg)
 
 void checkIfEndedCB(uv_prepare_t *handle)
 {
+  // std::cout << "checkIfEndedCB\n";
   if (downloads == 0) {
     uv_walk(uvMainLoop, closeHandles, NULL);
   }
@@ -460,9 +475,9 @@ int main()
   }
 
 
-  int PATH_SIZE = 495;
+  int PATH_SIZE = 10;
   int REPEATS = 1;
-  int MAX_CONNECTIONS = 1;
+  int MAX_CONNECTIONS = 4;
   bool sequential = false;
   bool useLibUV = true;
 
