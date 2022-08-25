@@ -68,7 +68,7 @@ std::vector<std::string*> createEtagsFromCS()
   return vec;
 }
 
-void blockingBatchTest(int pathLimit = 0)
+int64_t blockingBatchTest(int pathLimit = 0, bool printResult = false)
 {
   // Preparing for downloading
   auto paths = createPathsFromCS();
@@ -93,15 +93,17 @@ void blockingBatchTest(int pathLimit = 0)
   cleanAllHandles(handles);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "BLOCKING BATCH TEST:  Download - " <<  difference << "ms.\n";
+  if (printResult)
+    std::cout << "BLOCKING BATCH TEST:  Download - " <<  difference << "ms.\n";
 
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
   }
+  return difference;
 }
 
-void blockingBatchTestValidity(int pathLimit = 0)
+int64_t blockingBatchTestValidity(int pathLimit = 0, bool printResult = false)
 {
   // Preparing for checking objects validity
   auto paths = createPathsFromCS();
@@ -143,10 +145,12 @@ void blockingBatchTestValidity(int pathLimit = 0)
   cleanAllHandles(handles);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "BLOCKING BATCH TEST:  Check validity - " <<  difference << "ms.\n";
+  if (printResult)
+    std::cout << "BLOCKING BATCH TEST:  Check validity - " <<  difference << "ms.\n";
+  return difference;
 }
 
-void asynchBatchTest(int pathLimit = 0)
+int64_t asynchBatchTest(int pathLimit = 0, bool printResult = false)
 {
   // Preparing urls and objects to write into
   auto paths = createPathsFromCS();
@@ -177,15 +181,17 @@ void asynchBatchTest(int pathLimit = 0)
   cleanAllHandles(handles);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "ASYNC BATCH TEST:     download - " << difference << "ms.\n";
+  if (printResult)
+    std::cout << "ASYNC BATCH TEST:     download - " << difference << "ms.\n";
 
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
   }
+  return difference;
 }
 
-void asynchBatchTestValidity(int pathLimit = 0)
+int64_t asynchBatchTestValidity(int pathLimit = 0, bool printResult = false)
 {
   // Preparing for checking objects validity
   auto paths = createPathsFromCS();
@@ -226,10 +232,12 @@ void asynchBatchTestValidity(int pathLimit = 0)
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "ASYNC BATCH TEST:     Check validity - " <<  difference << "ms.\n";
+  if (printResult)
+    std::cout << "ASYNC BATCH TEST:     Check validity - " <<  difference << "ms.\n";
+  return difference;
 }
 
-void linearTest(int pathLimit = 0)
+int64_t linearTest(int pathLimit = 0, bool printResult = false)
 {
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
@@ -256,10 +264,12 @@ void linearTest(int pathLimit = 0)
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
   }
-  std::cout << "LINEAR TEST:          download - " << difference << "ms.\n";
+  if (printResult)
+    std::cout << "LINEAR TEST:          download - " << difference << "ms.\n";
+  return difference;
 }
 
-void linearTestValidity(int pathLimit = 0)
+int64_t linearTestValidity(int pathLimit = 0, bool printResult = false)
 {
   // Preparing for checking objects validity
   auto paths = createPathsFromCS();
@@ -290,11 +300,12 @@ void linearTestValidity(int pathLimit = 0)
   curl_easy_cleanup(handle);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "LINEAR TEST:          Check validity - " <<  difference << "ms.\n";
-
+  if (printResult)
+    std::cout << "LINEAR TEST:          Check validity - " <<  difference << "ms.\n";
+  return difference;
 }
 
-void linearTestNoReuse(int pathLimit = 0)
+int64_t linearTestNoReuse(int pathLimit = 0, bool printResult = false)
 {
   auto paths = createPathsFromCS();
   std::vector<std::string*> results;
@@ -313,13 +324,17 @@ void linearTestNoReuse(int pathLimit = 0)
   }
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  if (printResult)
+    std::cout << "LINEAR TEST no reuse:      download - " <<  difference << "ms.\n";
+
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
   }
+  return difference;
 }
 
-void linearTestNoReuseValidity(int pathLimit = 0)
+int64_t linearTestNoReuseValidity(int pathLimit = 0, bool printResult = false)
 {
   // Preparing for checking objects validity
   auto paths = createPathsFromCS();
@@ -350,7 +365,18 @@ void linearTestNoReuseValidity(int pathLimit = 0)
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  std::cout << "LINEAR NO REUSE TEST: Check validity - " <<  difference << "ms.\n";
+  if (printResult)
+    std::cout << "LINEAR NO REUSE TEST: Check validity - " <<  difference << "ms.\n";
+  return difference;
+}
+
+int64_t countAverageTime(int64_t (*function)(int, bool), int arg, int repeats)
+{
+  int64_t sum = 0;
+  for(int i = 0; i < repeats; i++) {
+    sum += function(arg, false);
+  }
+  return sum / repeats;
 }
 
 int main()
@@ -373,10 +399,20 @@ int main()
   // linearTest(testSize);
   // linearTestNoReuse(testSize);
 
-  blockingBatchTestValidity(testSize);
-  asynchBatchTestValidity(testSize);
-  linearTestValidity(testSize);
-  linearTestNoReuseValidity(testSize);
+  // blockingBatchTestValidity(testSize);
+  // asynchBatchTestValidity(testSize);
+  // linearTestValidity(testSize);
+  // linearTestNoReuseValidity(testSize);
+
+  int repeats = 20;
+
+
+  // std::cout << "--------------------------------------------------------------------------------------------\n";
+
+  std::cout << "Blocking perform: " << countAverageTime(blockingBatchTestValidity, testSize, repeats) << "ms.\n";
+  std::cout << "Async    perform: " << countAverageTime(asynchBatchTestValidity, testSize, repeats) << "ms.\n";
+  std::cout << "Single   handle : " << countAverageTime(linearTestValidity, testSize, repeats) << "ms.\n";
+  std::cout << "Signle no reuse : " << countAverageTime(linearTestNoReuseValidity, testSize, repeats) << "ms.\n";
 
   curl_global_cleanup();
 

@@ -64,10 +64,7 @@ AsynchronousDownloader::AsynchronousDownloader()
   curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERFUNCTION, startTimeout);
   curl_multi_setopt(curlMultiHandle, CURLMOPT_TIMERDATA, timeout);
 
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_MAX_TOTAL_CONNECTIONS, 1);
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_MAX_HOST_CONNECTIONS, 1);
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_MAX_CONCURRENT_STREAMS, 1);
-  curl_multi_setopt(curlMultiHandle, CURLMOPT_MAXCONNECTS, 1);
+  curl_multi_setopt(curlMultiHandle, CURLMOPT_MAX_TOTAL_CONNECTIONS, maxHandlesInUse);
   
 
   // Preparing queue checking timer
