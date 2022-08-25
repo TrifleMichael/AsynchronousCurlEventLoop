@@ -52,6 +52,22 @@ std::vector<std::string> createPathsFromCS()
   return vec;
 }
 
+std::vector<std::string*> createEtagsFromCS()
+{
+  std::vector<std::string*> vec;
+  std::string *tmp = new std::string();
+  for(int i = 0; i < etagsCS.size(); i++) {
+    if (etagsCS[i] == ',') {
+      vec.push_back(tmp);
+      tmp = new std::string();
+    } else {
+      (*tmp) += etagsCS[i];
+    }
+  }
+  vec.push_back(tmp);
+  return vec;
+}
+
 void blockingBatchTest(int pathLimit = 0)
 {
   // Preparing for downloading
@@ -77,25 +93,32 @@ void blockingBatchTest(int pathLimit = 0)
   cleanAllHandles(handles);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  std::cout << "BLOCKING BATCH TEST:  Download - " <<  difference << "ms.\n";
+
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
   }
+}
 
+void blockingBatchTestValidity(int pathLimit = 0)
+{
   // Preparing for checking objects validity
-  auto start2 = std::chrono::system_clock::now();
+  auto paths = createPathsFromCS();
+  auto etags = createEtagsFromCS();
+  auto start = std::chrono::system_clock::now();
 
-  std::vector<std::string*> results2;
-  std::vector<CURL*> handles2;
+  std::vector<std::string*> results;
+  std::vector<CURL*> handles;
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     auto handle = curl_easy_init();
-    results2.push_back(new std::string());
-    handles2.push_back(handle);
+    results.push_back(new std::string());
+    handles.push_back(handle);
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
-    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results2.back());
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results.back());
     curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
 
-    std::string etagHeader = "If-None-Match: \"" + urlETagMap[paths[i]] + "\"";
+    std::string etagHeader = "If-None-Match: \"" + *etags[i] + "\"";
     struct curl_slist *curlHeaders = nullptr;
     curlHeaders = curl_slist_append(curlHeaders, etagHeader.c_str());
     curl_easy_setopt(handle, CURLOPT_HTTPHEADER, curlHeaders);
@@ -103,23 +126,24 @@ void blockingBatchTest(int pathLimit = 0)
 
   // Checking objects validity
 
-  AD.batchBlockingPerform(handles2);
+  AsynchronousDownloader AD;
+  AD.batchBlockingPerform(handles);
 
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     long code;
-    curl_easy_getinfo(handles2[i], CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_getinfo(handles[i], CURLINFO_RESPONSE_CODE, &code);
     if (code != 304) {
       char* url;
-      curl_easy_getinfo(handles2[i], CURLINFO_EFFECTIVE_URL, &url);
+      curl_easy_getinfo(handles[i], CURLINFO_EFFECTIVE_URL, &url);
       std::cout << "INVALID CODE: " << code << ", URL: " << url << "\n";
     }
   }
 
   // Clean handles and print time
-  cleanAllHandles(handles2);
-  auto end2 = std::chrono::system_clock::now();
-  auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
-  std::cout << "BLOCKING BATCH TEST:  download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
+  cleanAllHandles(handles);
+  auto end = std::chrono::system_clock::now();
+  auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  std::cout << "BLOCKING BATCH TEST:  Check validity - " <<  difference << "ms.\n";
 }
 
 void asynchBatchTest(int pathLimit = 0)
@@ -153,49 +177,56 @@ void asynchBatchTest(int pathLimit = 0)
   cleanAllHandles(handles);
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  std::cout << "ASYNC BATCH TEST:     download - " << difference << "ms.\n";
 
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
   }
+}
 
+void asynchBatchTestValidity(int pathLimit = 0)
+{
   // Preparing for checking objects validity
-  auto start2 = std::chrono::system_clock::now();
+  auto paths = createPathsFromCS();
+  auto etags = createEtagsFromCS();
+  auto start = std::chrono::system_clock::now();
+  AsynchronousDownloader AD;
 
-  std::vector<std::string*> results2;
-  std::vector<CURL*> handles2;
+  std::vector<std::string*> results;
+  std::vector<CURL*> handles;
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     auto handle = curl_easy_init();
-    results2.push_back(new std::string());
-    handles2.push_back(handle);
+    results.push_back(new std::string());
+    handles.push_back(handle);
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
-    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results2.back());
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results.back());
     curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
 
-    std::string etagHeader = "If-None-Match: \"" + extractETAG(urlETagMap[paths[i]]) + "\"";
+    std::string etagHeader = "If-None-Match: \"" + *etags[i] + "\"";
     struct curl_slist *curlHeaders = nullptr;
     curlHeaders = curl_slist_append(curlHeaders, etagHeader.c_str());
     curl_easy_setopt(handle, CURLOPT_HTTPHEADER, curlHeaders);
   }
 
   // Checking objects validity
-  bool requestFinished2 = false;
-  AD.batchAsynchPerform(handles2, &requestFinished2);
-  while (!requestFinished2) sleep(0.001);
-  cleanAllHandles(handles2);
+  bool requestFinished = false;
+  AD.batchAsynchPerform(handles, &requestFinished);
+  while (!requestFinished) sleep(0.001);
+  cleanAllHandles(handles);
 
   // Checking if objects did not change
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     long code;
-    curl_easy_getinfo(handles2[i], CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_getinfo(handles[i], CURLINFO_RESPONSE_CODE, &code);
     if (code != 304) {
       std::cout << "INVALID CODE: " << code << "\n";
     }
   }
 
-  auto end2 = std::chrono::system_clock::now();
-  auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
-  std::cout << "ASYNC BATCH TEST:     download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
+  auto end = std::chrono::system_clock::now();
+  auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  std::cout << "ASYNC BATCH TEST:     Check validity - " <<  difference << "ms.\n";
 }
 
 void linearTest(int pathLimit = 0)
@@ -218,23 +249,32 @@ void linearTest(int pathLimit = 0)
 
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+  curl_easy_cleanup(handle);
   
   // Extracting etags
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
   }
+  std::cout << "LINEAR TEST:          download - " << difference << "ms.\n";
+}
 
+void linearTestValidity(int pathLimit = 0)
+{
   // Preparing for checking objects validity
-  auto start2 = std::chrono::system_clock::now();
+  auto paths = createPathsFromCS();
+  auto etags = createEtagsFromCS();
+  auto start = std::chrono::system_clock::now();
 
-  std::vector<std::string*> results2;
+  std::vector<std::string*> results;
+  CURL* handle = curl_easy_init();
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
-    results2.push_back(new std::string());
+    results.push_back(new std::string());
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
-    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results2.back());
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results.back());
     curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
 
-    std::string etagHeader = "If-None-Match: \"" + extractETAG(urlETagMap[paths[i]]) + "\"";
+    std::string etagHeader = "If-None-Match: \"" + *etags[i] + "\"";
     struct curl_slist *curlHeaders = nullptr;
     curlHeaders = curl_slist_append(curlHeaders, etagHeader.c_str());
     curl_easy_setopt(handle, CURLOPT_HTTPHEADER, curlHeaders);
@@ -248,9 +288,9 @@ void linearTest(int pathLimit = 0)
   }
 
   curl_easy_cleanup(handle);
-  auto end2 = std::chrono::system_clock::now();
-  auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
-  std::cout << "LINEAR TEST:          download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
+  auto end = std::chrono::system_clock::now();
+  auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  std::cout << "LINEAR TEST:          Check validity - " <<  difference << "ms.\n";
 
 }
 
@@ -270,7 +310,6 @@ void linearTestNoReuse(int pathLimit = 0)
     setHandleOptions(handle, results.back(), headers.back(), &paths[i]);
     curl_easy_perform(handle);
     curl_easy_cleanup(handle);
-
   }
   auto end = std::chrono::system_clock::now();
   auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -278,19 +317,24 @@ void linearTestNoReuse(int pathLimit = 0)
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     urlETagMap[paths[i]] = extractETAG(*headers[i]);
   }
+}
 
+void linearTestNoReuseValidity(int pathLimit = 0)
+{
   // Preparing for checking objects validity
-  auto start2 = std::chrono::system_clock::now();
+  auto paths = createPathsFromCS();
+  auto etags = createEtagsFromCS();
+  auto start = std::chrono::system_clock::now();
 
-  std::vector<std::string*> results2;
+  std::vector<std::string*> results;
   for (int i = 0; i < (pathLimit == 0 ? paths.size() : pathLimit); i++) {
     CURL* handle = curl_easy_init();
-    results2.push_back(new std::string());
+    results.push_back(new std::string());
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToString);
-    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results2.back());
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, results.back());
     curl_easy_setopt(handle, CURLOPT_URL, paths[i].c_str());
 
-    std::string etagHeader = "If-None-Match: \"" + extractETAG(urlETagMap[paths[i]]) + "\"";
+    std::string etagHeader = "If-None-Match: \"" + *etags[i] + "\"";
     struct curl_slist *curlHeaders = nullptr;
     curlHeaders = curl_slist_append(curlHeaders, etagHeader.c_str());
     curl_easy_setopt(handle, CURLOPT_HTTPHEADER, curlHeaders);
@@ -304,10 +348,9 @@ void linearTestNoReuse(int pathLimit = 0)
     curl_easy_cleanup(handle);
   }
 
-  auto end2 = std::chrono::system_clock::now();
-  auto difference2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count();
-  std::cout << "LINEAR NO REUSE TEST: download - " << difference << "ms, Check validity - " <<  difference2 << "ms.\n";
-
+  auto end = std::chrono::system_clock::now();
+  auto difference = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  std::cout << "LINEAR NO REUSE TEST: Check validity - " <<  difference << "ms.\n";
 }
 
 int main()
@@ -325,10 +368,15 @@ int main()
   else
     std::cout << "-------------- Testing for all objects with " << AsynchronousDownloader::maxHandlesInUse << " parallel connections. -----------\n";
 
-  blockingBatchTest(testSize);
+  // blockingBatchTest(testSize);
   // asynchBatchTest(testSize);
   // linearTest(testSize);
   // linearTestNoReuse(testSize);
+
+  blockingBatchTestValidity(testSize);
+  asynchBatchTestValidity(testSize);
+  linearTestValidity(testSize);
+  linearTestNoReuseValidity(testSize);
 
   curl_global_cleanup();
 
