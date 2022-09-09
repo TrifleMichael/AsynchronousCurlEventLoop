@@ -121,14 +121,14 @@ std::unordered_map<int, std::string*> createEtags(std::unordered_map<int, std::s
 
       auto curlCode = curl_easy_perform(handle);
 
-      if (curlCode != CURLE_OK) {
+      if (curlCode != CURLE_OK && curlCode != CURLE_UNSUPPORTED_PROTOCOL) {
         std::cout << "ERROR. Url code: " << curlCode << "\n";
       }
       
       long httpCode;
       curl_easy_getinfo(handle, CURLINFO_HTTP_CODE, &httpCode);
 
-      if (httpCode != 200 || !headersContainEtag(*headers[i])) {
+      if ((httpCode != 200 && httpCode != 303) || !headersContainEtag(*headers[i])) {
         std::cout << "Erased " << *(*paths)[i] << "\n";
         std::cout << "Http code: " << httpCode << "\n";
         std::cout << "Etag received? " << (headersContainEtag(*headers[i]) ? "Yes." : "No.") << "\n\n";
@@ -146,11 +146,11 @@ std::unordered_map<int, std::string*> createEtags(std::unordered_map<int, std::s
 
 int main()
 {
-  std::string serverUrl = "http://ccdb-test.cern.ch:8080";
-  std::string queryUrl = "http://ccdb-test.cern.ch:8080/latest/%5Cw%7B3%7D/.*/1659949694000?Accept=application/json";
+  // std::string serverUrl = "http://ccdb-test.cern.ch:8080";
+  // std::string queryUrl = "http://ccdb-test.cern.ch:8080/latest/%5Cw%7B3%7D/.*/1659949694000?Accept=application/json";
 
-  // std::string serverUrl = "http://alice-ccdb.cern.ch";
-  // std::string queryUrl = "http://alice-ccdb.cern.ch/latest/%5Cw%7B3%7D/.*/1659949694000?Accept=application/json";
+  std::string serverUrl = "http://alice-ccdb.cern.ch";
+  std::string queryUrl = "http://alice-ccdb.cern.ch/latest/%5Cw%7B3%7D/.*/1659949694000?Accept=application/json";
 
   curl_global_init(CURL_GLOBAL_ALL);
   auto paths = createPaths(queryUrl, serverUrl);
@@ -159,12 +159,12 @@ int main()
   int omitted = total - etags.size();
   curl_global_cleanup();
 
-  std::string headerString = "std::vector<std::string> etagsCS = \"";
+  std::string headerString = "std::string etagsCS = \"";
   for(auto etag : etags) headerString += *etag.second + ",";
   headerString.pop_back();
   headerString += "\";";
 
-  std::string pathString = "std::vector<std::string> pathCS = \"";
+  std::string pathString = "std::string pathsCS = \"";
   for(auto path : paths) pathString += *path.second + ",";
   pathString.pop_back();
   pathString += "\";";
