@@ -144,6 +144,20 @@ std::unordered_map<int, std::string*> createEtags(std::unordered_map<int, std::s
   return headers;
 }
 
+void addSToHttp(std::string *str)
+{
+  int ind = str->find("http") + 4;
+  str->insert(ind, "s");
+}
+
+void httpToHttps(std::unordered_map<int, std::string*>* pathsMap)
+{
+  for(auto keyPath : (*pathsMap))
+  {
+    addSToHttp(keyPath.second);
+  }
+}
+
 int main()
 {
   // std::string serverUrl = "http://ccdb-test.cern.ch:8080";
@@ -163,6 +177,8 @@ int main()
   for(auto etag : etags) headerString += *etag.second + ",";
   headerString.pop_back();
   headerString += "\";";
+
+  httpToHttps(&paths);
 
   std::string pathString = "std::string pathsCS = \"";
   for(auto path : paths) pathString += *path.second + ",";
